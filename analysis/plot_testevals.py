@@ -13,7 +13,7 @@ DOMAIN_YLIM = {
     "genesis_go2walking": 1.0,
     "genesis_go2walkback": 1.0,
     "genesis_go2hop": 0.5,
-    "imo_grading": 0.7,
+    "imo_grading": 0.8,
     "imo_proof": 1.0,
 }
 TO_FORMAT = False
@@ -23,9 +23,9 @@ def wrap_label(label):
     """Wrap long labels to multiple lines at semantic breakpoints."""
     # Define smart breakpoints in order of priority
     breakpoints = [
-        (" w/o ", "\nw/o "),           # "DGM-HA w/o X" -> "DGM-HA\nw/o X"
+        (" w/o ", "\nw/o "),           # "DGM-H w/o X" -> "DGM-H\nw/o X"
         (" + ", "\n+ "),               # "X + Y" -> "X\n+ Y"
-        (" (", "\n("),                 # "DGM-HA (description)" -> "DGM-HA\n(description)"
+        (" (", "\n("),                 # "DGM-H (description)" -> "DGM-H\n(description)"
     ]
 
     result = label
@@ -88,21 +88,21 @@ if __name__ == "__main__":
                     [0.65],  # genid 72
                     [0.57],  # genid 65
                 ],
-                "DGM-HA w/o open-ended exploration": [
+                "DGM-H w/o open-ended exploration": [
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                     [0.56],  # genid 100
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                     [0.13],  # genid 48
                 ],
-                "DGM-HA": [
+                "DGM-H": [
                     [0.68],  # genid 48
                     [0.71],  # genid 49
                     [0.59],  # genid 62
@@ -135,21 +135,21 @@ if __name__ == "__main__":
                     [0.402],  # genid 87
                     [0.0],  # genid 86
                 ],
-                "DGM-HA w/o open-ended exploration": [
+                "DGM-H w/o open-ended exploration": [
                     [0.057],  # genid 3
                     [0.812],  # genid 54
                     [0.0],  # genid 1
                     [0.0],  # genid 44
                     [0.135],  # genid 4
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [0.605],  # genid 63
                     [0.341],  # genid 97
                     [0.738],  # genid 62
                     [0.641],  # genid 31
                     [0.133],  # genid 34
                 ],
-                "DGM-HA": [
+                "DGM-H": [
                     [0.798],  # genid 79
                     [0.613],  # genid 91
                     [0.811],  # genid 12
@@ -182,21 +182,21 @@ if __name__ == "__main__":
                     [0.385],  # genid 87
                     [0.305],  # genid 86
                 ],
-                "DGM-HA w/o open-ended exploration": [
+                "DGM-H w/o open-ended exploration": [
                     [0.0],  # genid 3
                     [0.348],  # genid 54
                     [0.116],  # genid 1
                     [0.0],  # genid 44
                     [0.232],  # genid 4
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [0.204],  # genid 63
                     [0.348],  # genid 97
                     [0.213],  # genid 62
                     [0.263],  # genid 31
                     [0.180],  # genid 34
                 ],
-                "DGM-HA": [
+                "DGM-H": [
                     [0.399],  # genid 79
                     [0.368],  # genid 91
                     [0.372],  # genid 12
@@ -230,21 +230,21 @@ if __name__ == "__main__":
                     [(0.5+0.402)/2],  # genid 87
                     [(0.52+0.0)/2],  # genid 86
                 ],
-                "DGM-HA w/o open-ended exploration": [
+                "DGM-H w/o open-ended exploration": [
                     [(0.0+0.057)/2],  # genid 3
                     [(0.0+0.812)/2],  # genid 54
                     [(0.56+0.0)/2],  # genid 100
                     [(0.0+0.0)/2],  # genid 44
                     [(0.0+0.134)/2],  # genid 4
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [(0.0+0.605)/2],  # genid 63
                     [(0.0+0.341)/2],  # genid 97
                     [(0.0+0.738)/2],  # genid 62
                     [(0.0+0.641)/2],  # genid 31
                     [(0.0+0.133)/2],  # genid 34
                 ],
-                "DGM-HA": [
+                "DGM-H": [
                     [(0.65+0.803)/2],  # genid 89
                     [(0.47+0.613)/2],  # genid 91
                     [(0.59+0.648)/2],  # genid 62
@@ -275,21 +275,21 @@ if __name__ == "__main__":
                     [(0.5+0.385)/2],  # genid 87
                     [(0.52+0.305)/2],  # genid 86
                 ],
-                "DGM-HA w/o open-ended exploration": [
+                "DGM-H w/o open-ended exploration": [
                     [(0.0+0.0)/2],  # genid 3
                     [(0.0+0.348)/2],  # genid 54
                     [(0.56+0.0)/2],  # genid 100
                     [(0.0+0.0)/2],  # genid 44
                     [(0.0+0.232)/2],  # genid 4
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [(0.0+0.204)/2],  # genid 63
                     [(0.0+0.348)/2],  # genid 97
                     [(0.0+0.213)/2],  # genid 62
                     [(0.0+0.263)/2],  # genid 31
                     [(0.0+0.180)/2],  # genid 34
                 ],
-                "DGM-HA": [
+                "DGM-H": [
                     [(0.65+0.433)/2],  # genid 89
                     [(0.47+0.368)/2],  # genid 91
                     [(0.59+0.177)/2],  # genid 62
@@ -335,21 +335,21 @@ if __name__ == "__main__":
                 "Initial agent": [
                     [0.0],
                 ],
-                "DGM-HA w/o self-improve": [
+                "DGM-H w/o self-improve": [
                     [0.0],  # genid initial
                     [0.01],  # genid 8
                     [0.0],  # genid initial
                     [0.0],  # genid initial
                     [0.13],  # genid 5
                 ],
-                "Transfer agents from prev DGM-HA": [
+                "Transfer agents from prev DGM-H": [
                     [0.0],
                     [0.0],
                     [0.0],
                     [0.0],
                     [0.0],
                 ],
-                "DGM-HA w/o self-improve + transfer": [
+                "DGM-H w/o self-improve + transfer": [
                     [0.63],  # gen 24
                     [0.63],  # gen 14
                     [0.60],  # gen 50
@@ -362,22 +362,59 @@ if __name__ == "__main__":
             "transfer_continue",
             ["imo_grading"],
             {
-                "DGM-HA": [
+                "DGM-H": [
                     [0.63],  # genid 66
                     [0.51],  # genid 135
                     [0.61],  # genid 197
                     [0.60],  # genid 147
                     [0.68],  # genid 189
                 ],
-                "DGM-HA + transfer": [
+                "DGM-H + transfer": [
                     [0.72],  # genid 168
                     [0.55],  # genid 92
                     [0.66],  # genid 114
                     [0.62],  # genid 151
                     [0.64],  # genid 104
                 ],
-                "DGM-HA + transfer + from ProofAutoGrader": [
+                "DGM-H + transfer + from ProofAutoGrader": [
                     [0.7],  # genid 71, chosen by mae
+                ],
+                "Representative Baseline (Luong et al., 2025)": [
+                    [0.67],
+                ],
+            }
+        ),
+        (
+            "transfer_continue2",
+            ["imo_grading"],
+            {
+                "DGM-H w/o self-improve": [
+                    [0.0],   # genid initial
+                    [0.01],  # genid 8
+                    [0.0],   # genid initial
+                    [0.0],   # genid initial
+                    [0.13],  # genid 5
+                ],
+                "DGM-H": [
+                    [0.63],  # genid 66
+                    [0.51],  # genid 135
+                    [0.61],  # genid 197
+                    [0.60],  # genid 147
+                    [0.68],  # genid 189
+                ],
+                "DGM-H w/o self-improve + transfer": [
+                    [0.63],  # gen 24
+                    [0.63],  # gen 14
+                    [0.60],  # gen 50
+                    [0.54],  # gen 24
+                    [0.63],  # gen 43
+                ],
+                "DGM-H + transfer": [
+                    [0.72],  # genid 168
+                    [0.55],  # genid 92
+                    [0.66],  # genid 114
+                    [0.62],  # genid 151
+                    [0.64],  # genid 104
                 ],
                 "Representative Baseline (Luong et al., 2025)": [
                     [0.67],
@@ -389,21 +426,21 @@ if __name__ == "__main__":
             "parentselect",
             ["paper_review", "genesis_go2walkback"],
             {
-                "DGM-HA (random parent selection)": [
+                "DGM-H (random parent selection)": [
                     [(0.67+0.737)/2],  # genid 100
                     [(0.62+0.084)/2],  # genid 66
                     [(0.57+0.525)/2],  # genid 87
                     [(0.50+0.306)/2],  # genid 2
                     [(0.59+0.498)/2],  # genid 60
                 ],
-                "DGM-HA (modifiable parent selection)": [
+                "DGM-H (modifiable parent selection)": [
                     [(0.65+0.811)/2],  # genid 98
                     [(0.78+0.664)/2],  # genid 75
                     [(0.57+0.818)/2],  # genid 56
                     [(0.56+0.265)/2],  # genid 74
                     [(0.58+0.810)/2],  # genid 44
                 ],
-                "DGM-HA (score-child-prop parent selection)": [
+                "DGM-H (score-child-prop parent selection)": [
                     [(0.65+0.803)/2],  # genid 89
                     [(0.47+0.613)/2],  # genid 91
                     [(0.59+0.648)/2],  # genid 62
@@ -417,21 +454,21 @@ if __name__ == "__main__":
             "parentselect",
             ["paper_review", "genesis_go2hop"],
             {
-                "DGM-HA (random parent selection)": [
+                "DGM-H (random parent selection)": [
                     [(0.67+0.185)/2],  # genid 100
                     [(0.62+0.194)/2],  # genid 66
                     [(0.57+0.293)/2],  # genid 87
                     [(0.50+0.330)/2],  # genid 2
                     [(0.59+0.271)/2],  # genid 60
                 ],
-                "DGM-HA (modifiable parent selection)": [
+                "DGM-H (modifiable parent selection)": [
                     [(0.65+0.332)/2],  # genid 98
                     [(0.78+0.243)/2],  # genid 75
                     [(0.57+0.439)/2],  # genid 56
                     [(0.56+0.213)/2],  # genid 74
                     [(0.58+0.314)/2],  # genid 44
                 ],
-                "DGM-HA (score-child-prop parent selection)": [
+                "DGM-H (score-child-prop parent selection)": [
                     [(0.65+0.433)/2],  # genid 89
                     [(0.47+0.368)/2],  # genid 91
                     [(0.59+0.177)/2],  # genid 62
@@ -450,30 +487,30 @@ if __name__ == "__main__":
                 "Initial agent (test: BetterGrader)": [
                     [0.0],
                 ],
-                "DGM-HA (training: ProofAutoGrader) (test: ProofAutoGrader)": [
+                "DGM-H (training: ProofAutoGrader) (test: ProofAutoGrader)": [
                     [0.471],  # genid 20
                     [0.443],  # genid 44
                     [0.569],  # genid 46
                     [0.307],  # genid 27
                     [0.460],  # genid 13
                 ],
-                "DGM-HA (training: ProofAutoGrader) (test: BetterGrader)": [
+                "DGM-H (training: ProofAutoGrader) (test: BetterGrader)": [
                     [0.486],
                     [0.443],
                     [0.571],
                     [0.290],
                     [0.345],
                 ],
-                "DGM-HA (training: ProofAutoGrader) (test: human eval)": [
+                "DGM-H (training: ProofAutoGrader) (test: human eval)": [
                     [],
                 ],
-                "DGM-HA long run (training: ProofAutoGrader) (test: ProofAutoGrader)": [
+                "DGM-H long run (training: ProofAutoGrader) (test: ProofAutoGrader)": [
                     [0.662],  # genid 358
                 ],
-                "DGM-HA long run (training: ProofAutoGrader) (test: BetterGrader)": [
+                "DGM-H long run (training: ProofAutoGrader) (test: BetterGrader)": [
                     [0.543],
                 ],
-                "DGM-HA long run (training: ProofAutoGrader) (test: human eval)": [
+                "DGM-H long run (training: ProofAutoGrader) (test: human eval)": [
                     [],
                 ],
             }
@@ -575,7 +612,7 @@ if __name__ == "__main__":
         if len(bar_methods) > 0:
             # Draw bars separately: Initial agent without error bars, others with
             for idx, mname in enumerate(bar_methods):
-                if mname == "Initial agent" or mname == "DGM-HA + transfer + from ProofAutoGrader":
+                if mname == "Initial agent" or mname == "DGM-H + transfer + from ProofAutoGrader":
                     # Draw without error bars
                     plt.bar(
                         bar_indices[idx],
@@ -603,14 +640,14 @@ if __name__ == "__main__":
             if TO_FORMAT:
                 plt.xticks([], [])
             else:
-                plt.xticks(bar_indices, wrapped_labels, fontsize=12)
-            plt.yticks(fontsize=12)
+                plt.xticks(bar_indices, wrapped_labels, fontsize=14)
+            plt.yticks(fontsize=14)
             # Keep x-limits tight to bars
             plt.xlim(-0.5, len(bar_methods) - 0.5)
         else:
             # No bars to show (only static baselines) — keep a simple x-axis
             plt.xticks([], [])
-            plt.yticks(fontsize=12)
+            plt.yticks(fontsize=14)
             plt.xlim(0, 1)
 
         # Plot static (baseline) methods as horizontal lines + CI/std shading + right-side labels
@@ -638,7 +675,7 @@ if __name__ == "__main__":
         for i, mname in enumerate(method_names):
             if any(s in mname for s in static_methods):
                 y_val = central_values[i]
-                ax.text(label_x, y_val + 0.01, mname, color="black", fontsize=12, ha="left", va="bottom")
+                ax.text(label_x, y_val + 0.01, mname, color="black", fontsize=14, ha="left", va="bottom")
 
         # Axis and layout
         # plt.ylabel("Performance of Best Agent")

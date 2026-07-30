@@ -1,2 +1,4 @@
 outputs/
 outputs_os/
+.DS_Store
+__pycache__/

@@ -20,8 +20,11 @@ METHODS_TO_COLORS = {
     "DGM": "#d34d4d",                        # red
     "DGM-custom": "#7e45aa",        # purple
     "DGM-HA w/o open-ended exploration": "#edb301",  # yellow
+    "DGM-H w/o open-ended exploration": "#edb301",   # alias for DGM-HA rename
     "DGM-HA w/o self-improve": "#00b051",       # green
+    "DGM-H w/o self-improve": "#00b051",        # alias for DGM-HA rename
     "DGM-HA": "#0270c0",                        # blue (main method)
+    "DGM-H": "#0270c0",                         # alias for DGM-HA rename
 
     # === TRANSFER_DGM experiment ===
     "Transfer agents from prev DGM": "#4d4d4d",
@@ -31,23 +34,33 @@ METHODS_TO_COLORS = {
 
     # === TRANSFER_HYP experiment ===
     "Transfer agents from prev DGM-HA": "#4d4d4d",
+    "Transfer agents from prev DGM-H": "#4d4d4d",    # alias for DGM-HA rename
     # "DGM-HA w/o self-improve" - already defined above
     "DGM-HA w/o self-improve + transfer": "#006a31",  # dark green
+    "DGM-H w/o self-improve + transfer": "#006a31",   # alias for DGM-HA rename
 
     # === TRANSFER_CONTINUE experiment ===
     # "DGM-HA" - already defined above
     "DGM-HA + transfer": "#014373",             # dark blue
+    "DGM-H + transfer": "#014373",              # alias for DGM-HA rename
     "DGM-HA + transfer + from ProofAutoGrader": "#022abf",  # dark blue
+    "DGM-H + transfer + from ProofAutoGrader": "#022abf",   # alias for DGM-HA rename
 
     # === PARENT_SELECTION experiment ===
     "DGM-HA (random parent selection)": "#4ea72e",            # apple green
+    "DGM-H (random parent selection)": "#4ea72e",             # alias for DGM-HA rename
     "DGM-HA (modifiable parent selection)": "#e97132",        # orange
+    "DGM-H (modifiable parent selection)": "#e97132",         # alias for DGM-HA rename
     "DGM-HA (score-child-prop parent selection)": "#0270c0",  # blue (main)
+    "DGM-H (score-child-prop parent selection)": "#0270c0",   # alias for DGM-HA rename
 
     # === DIFFJUDGES experiment ===
     "DGM-HA (evaled by ProofAutoGrader)": "#0270c0",  # blue (main)
-    "DGM-HA (evaled by better grader)": "#17becf",  # cyan
+    "DGM-H (evaled by ProofAutoGrader)": "#0270c0",   # alias for DGM-HA rename
+    "DGM-HA (evaled by better grader)": "#17becf",    # cyan
+    "DGM-H (evaled by better grader)": "#17becf",     # alias for DGM-HA rename
     "DGM-HA + transfer (evaled by ProofAutoGrader)": "#014373",  # dark blue
+    "DGM-H + transfer (evaled by ProofAutoGrader)": "#014373",   # alias for DGM-HA rename
 }
 TO_FORMAT = True
 
