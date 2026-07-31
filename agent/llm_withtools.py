@@ -90,7 +90,7 @@ def process_tool_call(tools_dict, tool_name, tool_input):
 
 def chat_with_agent(
     msg,
-    model="claude-4-sonnet-genai",
+    model="anthropic/claude-sonnet-4-5-20250929",  # was internal alias "claude-4-sonnet-genai"
     msg_history=None,
     logging=print,
     tools_available=[],  # Empty list means no tools, 'all' means all tools
