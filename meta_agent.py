@@ -16,3 +16,5 @@ class MetaAgent(AgentSystem):
         instruction = f"Modify any part of the codebase at `{repo_path}`."
 
         new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log, tools_available='all')
+
+# smoke-test rejection-path comment
