@@ -42,3 +42,5 @@ Respond in JSON format with the following schema:
             prediction = "None"
 
         return prediction, new_msg_history
+
+# smoke-test comment: exercising the PR review gate
