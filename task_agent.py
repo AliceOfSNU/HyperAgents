@@ -31,6 +31,13 @@ Base commit: {base_commit}
 Language: {language or 'unknown'}
 Test description (if any): {test_description or 'none'}
 
+Workflow:
+1. First explore the repository (list files, read key modules/tests) to understand the structure and the code you need to modify.
+2. Implement a solution by editing files under `{git_tempdir}`. Make focused, minimal changes.
+3. Run the provided tests if possible (see test description above); if some tests fail, read the error output and iterate on your fix.
+4. If no tests are available, at least run a syntax/import check (e.g. `python -m py_compile` on changed files) to catch errors.
+5. Before finishing, run `git -C {git_tempdir} diff` (or `git diff` from inside the repo) to review your changes and make sure they are coherent and complete.
+
 You have access to bash and file editing tools. Work in the provided repository to implement a solution. Make the necessary code changes, run tests if possible, and ensure your changes are complete.
 
 After you finish making changes, respond in JSON format with the following schema:
