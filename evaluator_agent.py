@@ -105,12 +105,19 @@ class EvaluatorAgent(AgentSystem):
 
 ## Task
 Rate how well this report addresses the criterion compared to the original paper.
-First determine if this criterion is Objective (Mode A) or Subjective (Mode B), then apply the corresponding rubric strictly.
+
+## Scoring Procedure (follow strictly)
+1. First determine if this criterion is Objective (Mode A) or Subjective (Mode B); state which mode you are applying.
+2. Search the report for concrete, verifiable evidence relevant to the criterion: exact numbers, metric values, named methods, specific claims. Quote the exact sentence/figure/table from the report that contains each piece of evidence.
+3. If the criterion asks for quantitative results but the report gives no real numbers (or only vague/borrowed numbers), that is a low score regardless of how polished the text is. If the report fabricates or hand-waves results, score it near 0.
+4. Compare against the published-paper bar (50 = as good as the published paper). Be strict and skeptical of AI-generated-sounding filler.
 
 Respond in JSON format with the following schema:
 <json>
 {{
-    "reasoning": "<2-3 sentences>",
+    "mode": "A" or "B",
+    "evidence": "<2-4 verbatim quotes/specific numbers from the report you based your score on>",
+    "reasoning": "<2-4 sentences explaining the score>",
     "score": <integer 0-100>
 }}
 </json>"""
