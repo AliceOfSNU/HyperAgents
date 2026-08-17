@@ -1,2 +1,8 @@
 outputs/
 outputs_os/
+.env
+__pycache__/
+
+# arc_agi3: downloaded game files + optional session recordings from the arc-agi SDK
+environment_files/
+recordings/

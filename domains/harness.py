@@ -188,6 +188,7 @@ if __name__ == "__main__":
             "imo_grading",
             "imo_proof",
             "imo_proof_grading",  # To grade generated proofs with an agent
+            "arc_agi3",
         ],
         required=True,
         help="Domain to evaluate",
@@ -294,6 +295,35 @@ if __name__ == "__main__":
                 )
             )
             output_folder = harness_genesis(cfg)
+            # Save cfg in output folder
+            from omegaconf import OmegaConf
+            OmegaConf.save(config=cfg, f=os.path.join(output_folder, "config.yaml"))
+
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        from domains.arc_agi3.eval import harness_arc_agi3
+
+        config_dir = os.path.join(os.getcwd(), "./domains/arc_agi3/config")
+        with initialize_config_dir(config_dir=config_dir, version_base="1.1"):
+            cfg = compose(
+                config_name="config",
+                overrides=[
+                    f"eval.output_dir={args.output_dir}",
+                    f"eval.num_workers={args.num_workers}",
+                    f"eval.run_id={args.run_id if args.run_id is not None else 'null'}",
+                ]
+                + (
+                    [f"eval.num_episodes.arc_agi3={args.num_samples}"]
+                    if args.num_samples > 0
+                    else []
+                )
+                + (
+                    [f"eval.resume_from={args.resume_from}"]
+                    if args.resume_from is not None
+                    else []
+                ),
+            )
+            output_folder = harness_arc_agi3(cfg)
             # Save cfg in output folder
             from omegaconf import OmegaConf
             OmegaConf.save(config=cfg, f=os.path.join(output_folder, "config.yaml"))

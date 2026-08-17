@@ -27,3 +27,6 @@ git+https://github.com/nacloos/baba-is-ai
 rsl-rl-lib==2.2.4
 tensorboard==2.20.0
 git+https://github.com/Genesis-Embodied-AI/Genesis.git
+
+# for arc_agi3
+arc-agi==0.9.9

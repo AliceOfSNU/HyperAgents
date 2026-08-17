@@ -12,6 +12,7 @@
 #   - imo_grading
 #   - imo_proof
 #   - polyglot
+#   - arc_agi3
 # ============================================================================
 
 
@@ -64,4 +65,12 @@ python -m domains.report --domain paper_review --dname ./outputs/initial_paper_r
 # python -m domains.polyglot.prepare_polyglot_dataset
 # python -m domains.polyglot.harness --subset small --output_dir ./outputs/initial_polyglot_0 --model_name_or_path eval_run
 # python -m domains.polyglot.report --output_dir ./outputs/initial_polyglot_0 --model_name_or_path eval_run
+
+
+# # arc_agi3
+# # Requires ARC_API_KEY in .env (an anonymous key is used if unset, but with
+# # access to fewer games). Edit domains/arc_agi3/config/config.yaml to change
+# # which games / how many episodes per game are played.
+# python -m domains.harness --domain arc_agi3 --run_id initial_arc_agi3_0 --num_samples 1
+# python -m domains.report --domain arc_agi3 --dname ./outputs/initial_arc_agi3_0
 

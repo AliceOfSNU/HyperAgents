@@ -33,6 +33,7 @@ from utils.domain_utils import (
 from utils.gl_utils import (
     apply_diffs_container,
     get_patch_files,
+    get_node_metadata_key,
     get_score,
     load_archive_data,
     run_commands_to_check_compilation,
@@ -44,6 +45,7 @@ from utils.gl_utils import (
     is_starting_node,
     process_meta_patch_files,
 )
+from utils.pr_review import push_root_branch, run_pr_review_gate
 
 
 def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, num_samples=-1):
@@ -445,6 +447,10 @@ def generate(
     skip_staged_eval=False,
     edit_select_parent=False,
     max_generation=None,
+    require_pr_approval=False,
+    pr_remote="fork",
+    pr_poll_interval=30,
+    pr_root_branch=None,
 ):
     # Setup local output folder
     prev_gen_dir = os.path.join(output_dir, f"gen_{parent_genid}")
@@ -617,6 +623,30 @@ def generate(
             # Run commands to check if the agents are compilable
             run_commands_to_check_compilation(container, run_baseline=run_baseline, edit_select_parent=edit_select_parent)
 
+            # Human-in-the-loop PR review gate: open a PR for this self-modification
+            # and block until a human merges (accept) or closes (reject) it before
+            # letting it become part of the archive lineage.
+            if run_eval and require_pr_approval:
+                with open(local_patch_file, "r") as f:
+                    raw_patch_content = f.read()
+                parent_branch = get_node_metadata_key(output_dir, parent_genid, "pr_branch") or pr_root_branch
+                approved, pr_branch, pr_number, pr_url = run_pr_review_gate(
+                    root_dir=root_dir,
+                    run_id=run_id,
+                    genid=current_genid,
+                    parent_branch=parent_branch,
+                    raw_patch_content=raw_patch_content,
+                    remote=pr_remote,
+                    poll_interval=pr_poll_interval,
+                    logging=safe_log,
+                )
+                metadata["pr_branch"] = pr_branch
+                metadata["pr_number"] = pr_number
+                metadata["pr_url"] = pr_url
+                metadata["pr_approved"] = approved
+                run_eval = run_eval and approved
+                metadata["run_eval"] = run_eval
+
         # Evaluate the produced agent
         if run_eval and "agent" in optimize_option:
             log_path = os.path.join(gen_output_dir, "generate.log")
@@ -736,6 +766,9 @@ def generate_loop(
     eval_test=False,
     skip_staged_eval=False,
     edit_select_parent=False,
+    require_pr_approval=False,
+    pr_remote="fork",
+    pr_poll_interval=30,
 ):
     # Initialization
     docker_client = docker.DockerClient()
@@ -754,6 +787,7 @@ def generate_loop(
             eval_test=eval_test,
             edit_select_parent=edit_select_parent,
         )
+        pr_root_branch = push_root_branch(root_dir, root_commit, run_id, remote=pr_remote) if require_pr_approval else None
         archive = load_archive_data(
             os.path.join(output_dir, "archive.jsonl"), last_only=True
         )[
@@ -783,6 +817,7 @@ def generate_loop(
             eval_test=eval_test,
             edit_select_parent=edit_select_parent,
         )
+        pr_root_branch = push_root_branch(root_dir, root_commit, run_id, remote=pr_remote) if require_pr_approval else None
 
         # Create initial node
         if meta_patch_files is None or len(meta_patch_files) <= 0:
@@ -919,6 +954,10 @@ def generate_loop(
             skip_staged_eval=skip_staged_eval,
             edit_select_parent=edit_select_parent,
             max_generation=max_generation,
+            require_pr_approval=require_pr_approval,
+            pr_remote=pr_remote,
+            pr_poll_interval=pr_poll_interval,
+            pr_root_branch=pr_root_branch,
         )
 
         # NOTE: need to update and save archive before running ensembling eval
@@ -1042,6 +1081,7 @@ if __name__ == "__main__":
             "polyglot",  # separate harness from the rest
             "imo_grading",
             "imo_proof",
+            "arc_agi3",
         ],
         required=True,
         help="One or more domains to evaluate (must be from the allowed list)",
@@ -1151,6 +1191,29 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to allow the agent to edit the selection mechanism",
     )
+    parser.add_argument(
+        "--require_pr_approval",
+        default=False,
+        action="store_true",
+        help=(
+            "Gate every self-modification on human review: each generation's diff is "
+            "pushed as a branch and opened as a PR against --pr_remote (must be a git "
+            "remote you have write access to, e.g. your own fork), and the run blocks "
+            "until you merge (accept) or close (reject) it before evaluating/archiving it."
+        ),
+    )
+    parser.add_argument(
+        "--pr_remote",
+        type=str,
+        default="fork",
+        help="Git remote (configured in this repo) to push self-modification branches/PRs to",
+    )
+    parser.add_argument(
+        "--pr_poll_interval",
+        type=int,
+        default=30,
+        help="Seconds between checks of whether a pending PR has been merged/closed",
+    )
     args = parser.parse_args()
 
     # Post-parse validation
@@ -1186,4 +1249,7 @@ if __name__ == "__main__":
         eval_test=args.eval_test,
         skip_staged_eval=args.skip_staged_eval,
         edit_select_parent=args.edit_select_parent,
+        require_pr_approval=args.require_pr_approval,
+        pr_remote=args.pr_remote,
+        pr_poll_interval=args.pr_poll_interval,
     )

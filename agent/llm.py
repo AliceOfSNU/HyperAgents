@@ -24,6 +24,8 @@ OPENAI_GPT5MINI_MODEL = "openai/gpt-5-mini"
 GEMINI_3_MODEL = "gemini/gemini-3-pro-preview"
 GEMINI_MODEL = "gemini/gemini-2.5-pro"
 GEMINI_FLASH_MODEL = "gemini/gemini-2.5-flash"
+DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"
+DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 
 litellm.drop_params=True
 
@@ -104,6 +106,8 @@ if __name__ == "__main__":
         ("GEMINI_3_MODEL", GEMINI_3_MODEL),
         ("GEMINI_MODEL", GEMINI_MODEL),
         ("GEMINI_FLASH_MODEL", GEMINI_FLASH_MODEL),
+        ("DEEPSEEK_MODEL", DEEPSEEK_MODEL),
+        ("DEEPSEEK_FLASH_MODEL", DEEPSEEK_FLASH_MODEL),
     ]
     for name, model in models:
         print(f"\n{'='*50}")
