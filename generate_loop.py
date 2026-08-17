@@ -60,8 +60,9 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
     run_next_eval = True
 
     # Small sample size evaluation for staged eval
+    # Always load the small subset so the full-eval task list is correct even when staged eval is skipped
+    test_task_list = load_json_file("./domains/polyglot/subsets/small.json")
     if not skip_staged_eval:
-        test_task_list = load_json_file("./domains/polyglot/subsets/small.json")
         dnames = harness_polyglot(
             test_task_list=test_task_list,
             num_samples=-1,
