@@ -29,4 +29,10 @@ tensorboard==2.20.0
 git+https://github.com/Genesis-Embodied-AI/Genesis.git
 
 # for arc_agi3
-arc-agi==0.9.9
+# NOTE: arc-agi==0.9.9 requires pillow>=12.1.1, which is incompatible with
+# moviepy (a transitive dep of the Genesis git install above), which caps
+# pillow<12.0 across every available version -- there is no pillow version
+# that satisfies both, so the two domains currently cannot share one image.
+# Install separately (pip install arc-agi) in an environment that isn't
+# also running genesis, or revisit once one side relaxes its pillow pin.
+# arc-agi==0.9.9

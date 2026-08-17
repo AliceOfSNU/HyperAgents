@@ -65,7 +65,7 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
         dnames = harness_polyglot(
             test_task_list=test_task_list,
             num_samples=-1,
-            max_workers=10,
+            max_workers=3,  # lowered from 10: parallel per-task pip installs previously destabilized the host
             model_name_or_path=model_name_or_path,
             model_patch_paths=patch_files,
             num_evals=1,
@@ -84,7 +84,7 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
         dnames = harness_polyglot(
             test_task_list=test_task_list + test_task_list_more,
             num_samples=num_samples,
-            max_workers=10,
+            max_workers=3,  # lowered from 10: parallel per-task pip installs previously destabilized the host
             model_name_or_path=model_name_or_path,
             model_patch_paths=patch_files,
             num_evals=1,
@@ -590,8 +590,9 @@ def generate(
                     "--iterations_left",
                     str(max_generation - current_genid),
                     *(
-                        # If domain is polyglot, for a fair comparison with DGM
-                        ["--model", "claude-3-5-sonnet-20241022"] if domains == ["polyglot"] else []
+                        # Paper default is claude-3-5-sonnet-20241022 for a fair comparison
+                        # with DGM; switched to DeepSeek v4 flash (out of Anthropic credits).
+                        ["--model", "deepseek/deepseek-v4-flash"] if domains == ["polyglot"] else []
                     ),
                 ]
 
