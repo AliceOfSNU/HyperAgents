@@ -1,5 +1,6 @@
 import asyncio
 import os
+import subprocess
 
 def tool_info():
     return {
@@ -27,6 +28,7 @@ def tool_info():
 class BashSession:
     """A simple synchronous bash session."""
     def run(self, command):
+        import subprocess
         result = subprocess.run(
             command,
             shell=True,
