@@ -26,25 +26,53 @@ def tool_info():
     }
 
 class BashSession:
-    """A simple synchronous bash session."""
+    """A simple synchronous bash session with a persistent working directory and timeout."""
+    TIMEOUT = 180.0  # seconds
+
+    def __init__(self):
+        self.cwd = os.getcwd()
+
     def run(self, command):
-        import subprocess
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            cwd=os.getcwd(),
-        )
-        output = result.stdout.strip()
-        error = result.stderr.strip()
-        if result.returncode != 0 and error:
-            output = output + "\nError:\n" + error if output else "Error:\n" + error
-        return output
+        stripped = command.strip()
+
+        # Handle a leading `cd` so the working directory persists across tool calls.
+        if stripped.startswith("cd "):
+            parts = stripped.split("&&", 1)
+            cd_target = parts[0][3:].strip().strip('"').strip("'")
+            new_cwd = (
+                cd_target
+                if os.path.isabs(cd_target)
+                else os.path.normpath(os.path.join(self.cwd, cd_target))
+            )
+            if not os.path.isdir(new_cwd):
+                return f"Error: directory '{cd_target}' does not exist"
+            self.cwd = new_cwd
+            command = parts[1].strip() if len(parts) > 1 else "pwd"
+
+        # Always run in the persisted working directory.
+        full_command = f"cd {self.cwd} && {command}" if command else f"cd {self.cwd} && pwd"
+        try:
+            result = subprocess.run(
+                full_command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.TIMEOUT,
+            )
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+            if result.returncode != 0 and error:
+                output = output + "\nError:\n" + error if output else "Error:\n" + error
+            return output
+        except subprocess.TimeoutExpired:
+            return f"Error: Command timed out after {self.TIMEOUT} seconds. Background long-running tasks with e.g. 'nohup ... &' and then poll for completion."
+
+# Module-level session so working directory persists across tool calls.
+_GLOBAL_BASH_SESSION = BashSession()
 
 def tool_function(command):
     try:
-        return BashSession().run(command)
+        return _GLOBAL_BASH_SESSION.run(command)
     except Exception as e:
         return f"Error: {str(e)}"
 
