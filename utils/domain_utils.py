@@ -17,6 +17,9 @@ def get_domain_score_key(domain):
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
         return "average_score"
+    # Research domain (ResearchClawBench)
+    elif domain == "research":
+        return "node_utility"
 
 
 def get_domain_splits(domain, eval_test=False):
@@ -40,6 +43,9 @@ def get_domain_splits(domain, eval_test=False):
         return ["train"]
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
+        return ["train"]
+    # Research domain (ResearchClawBench) -- own file-based subset split, no val/test
+    elif domain == "research":
         return ["train"]
 
 
@@ -65,6 +71,9 @@ def can_domain_ensembled(domain):
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
         return False
+    # Research domain (ResearchClawBench) -- combined real+evaluator score, not ensembleable
+    elif domain == "research":
+        return False
 
 
 def get_domain_eval_subset(domain):
@@ -88,6 +97,9 @@ def get_domain_eval_subset(domain):
         return ""
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
+        return ""
+    # Research domain -- own file-based subset (domains/research/subsets/), unused here
+    elif domain == "research":
         return ""
 
 
@@ -113,6 +125,9 @@ def get_domain_test_subset(domain):
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
         return ""
+    # Research domain -- own file-based subset, unused here
+    elif domain == "research":
+        return ""
 
 
 def get_domain_stagedeval_samples(domain):
@@ -137,6 +152,10 @@ def get_domain_stagedeval_samples(domain):
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
         return 1
+    # Research domain -- size of the fixed scoring subset (domains/research/harness.py
+    # handles this internally; unused by the generic staged-eval path)
+    elif domain == "research":
+        return 10
 
 
 def get_domain_stagedeval_frac(domain):
@@ -166,6 +185,9 @@ def get_domain_stagedeval_frac(domain):
     # if you configure more episodes per game in domains/arc_agi3/config/config.yaml
     elif domain == "arc_agi3":
         return 1/3
+    # Research domain -- unused, handled internally by domains/research/harness.py
+    elif domain == "research":
+        return 10/40
 
 
 def has_domain_val_subset(domain):
@@ -189,4 +211,7 @@ def has_domain_val_subset(domain):
         return False
     # ARC-AGI-3 interactive reasoning domain
     elif domain == "arc_agi3":
+        return False
+    # Research domain
+    elif domain == "research":
         return False

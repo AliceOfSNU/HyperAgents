@@ -1,44 +1,62 @@
 import argparse
+import json
 import os
+from datetime import datetime
+from pathlib import Path
 
 from task_agent import TaskAgent
-from utils.git_utils import diff_versus_commit
+
+# Runs inside a sandboxed container. The workspace (data/, related_work/,
+# INSTRUCTIONS.md, and the code/outputs/report scaffold) is expected to
+# already be populated by the host-side harness before this script runs --
+# see domains/research/harness.py, which builds INSTRUCTIONS.md from
+# ResearchClawBench's own template (host has the RCB checkout; the
+# container deliberately does not).
+
+
+def write_meta(workspace, task_id, run_id, status, agent_name="hyperagents_task_agent"):
+    meta = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "status": status,
+        "workspace": str(workspace),
+        "agent_name": agent_name,
+    }
+    with open(Path(workspace) / "_meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run task agent on POLYGLOT benchmark.')
-    parser.add_argument('--problem_statement', required=True, help='The problem statement to process')
-    parser.add_argument('--git_dir', required=True, help='Path to git repository directory')
-    parser.add_argument('--base_commit', required=True, help='Base commit hash to compare against')
-    parser.add_argument('--chat_history_file', required=True, help='Path to chat history file')
-    parser.add_argument('--outdir', required=False, default="/dgm/", help='Output directory')
-    parser.add_argument('--test_description', default=None, required=False, help='Description of how to test the repository')
-    parser.add_argument('--language', default=None, required=False, help='Coding language of the repository')
-    parser.add_argument('--model', required=False, default="o3-mini", help='LLM model to use')
+    parser = argparse.ArgumentParser(description="Run the research task agent inside an already-populated workspace.")
+    parser.add_argument("--workspace", required=True, help="Pre-populated workspace (data/, related_work/, INSTRUCTIONS.md, code/, outputs/, report/)")
+    parser.add_argument("--task_id", required=True, help="ResearchClawBench task ID, recorded in _meta.json")
+    parser.add_argument("--chat_history_file", required=True)
+    parser.add_argument("--model", required=False, default="deepseek/deepseek-v4-flash")
+    parser.add_argument("--run_id", required=False, default=None)
     args = parser.parse_args()
 
-    # Process the repository
-    agentic_system = TaskAgent(
-        model=args.model,
-        chat_history_file=args.chat_history_file,
-    )
-    inputs = {
-        "domain": "polyglot",
-        "problem_statement": args.problem_statement,
-        "git_tempdir": args.git_dir,
-        "base_commit": args.base_commit,
-        "test_description": args.test_description,
-        "language": args.language,
-    }
+    chat_history_file = str(Path(args.chat_history_file).resolve())
+    workspace = str(Path(args.workspace).resolve())
+    run_id = args.run_id or f"{args.task_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Run the agentic system to try to solve the problem
-    agentic_system.forward(inputs)
+    instructions_path = Path(workspace, "INSTRUCTIONS.md")
+    instructions = instructions_path.read_text(encoding="utf-8")
+    for dirname in ("code", "outputs", "report", "report/images"):
+        Path(workspace, dirname).mkdir(parents=True, exist_ok=True)
 
-    # Get code diff and save to model_patch.diff
-    model_patch = diff_versus_commit(args.git_dir, args.base_commit)
-    model_patch_outfile = os.path.join(args.outdir, 'model_patch.diff') if args.outdir else 'model_patch.diff'
-    with open(model_patch_outfile, 'w') as f:
-        f.write(model_patch)
+    write_meta(workspace, args.task_id, run_id, "running")
+
+    prev_cwd = os.getcwd()
+    os.chdir(workspace)
+    try:
+        agentic_system = TaskAgent(model=args.model, chat_history_file=chat_history_file)
+        prediction, _ = agentic_system.forward({"instructions": instructions})
+    finally:
+        os.chdir(prev_cwd)
+
+    write_meta(workspace, args.task_id, run_id, "completed" if prediction == "done" else "failed")
+
 
 if __name__ == "__main__":
     main()
