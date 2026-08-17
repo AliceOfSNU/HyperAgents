@@ -1,8 +1,43 @@
 import json
+import re
 
 from agent.base_agent import AgentSystem
 from agent.llm import get_response_from_llm
 from utils.common import extract_jsons
+
+
+def _parse_score_response(response):
+    """Best-effort extraction of {\"reasoning\": ..., \"score\": ...} from a
+    model response that may or may not wrap the JSON in <json> tags, markdown
+    fences, or prose. Returns a dict or None. This is deliberately tolerant:
+    a silent score-0 failure on a valid-looking response is much worse than
+    accepting a slightly loose JSON object."""
+    if not response:
+        return None
+    # 1) extract_jsons handles <json> and ```json fences.
+    extracted = extract_jsons(response)
+    if extracted:
+        return extracted[-1]
+    # 2) Bare JSON object anywhere in the text (DeepSeek often ignores tags).
+    for m in re.finditer(r"\{.*?\}", response, re.DOTALL):
+        candidate = m.group(0)
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict) and "score" in obj:
+                return obj
+        except json.JSONDecodeError:
+            continue
+    # 3) Last resort: a trailing {...} block after thinking/prose.
+    try:
+        start = response.rfind("{")
+        end = response.rfind("}")
+        if start != -1 and end > start:
+            obj = json.loads(response[start:end + 1])
+            if isinstance(obj, dict) and "score" in obj:
+                return obj
+    except json.JSONDecodeError:
+        pass
+    return None
 
 # Seeded from ResearchClawBench's own rubric (evaluation/score.py) so the
 # starting evaluator has a reasonable prior; the meta-agent is free to edit
@@ -121,14 +156,7 @@ Respond in JSON format with the following schema:
 
         prediction = {"score": 0, "reasoning": "Failed to parse evaluator response."}
         try:
-            extracted = extract_jsons(response)
-            item = extracted[-1] if extracted else None
-            if item is None:
-                # Some backends (observed with DeepSeek) ignore the <json>
-                # wrapper and return a bare JSON object -- extract_jsons only
-                # matches <json>...</json> or ```json fences, so fall back to
-                # parsing the whole response directly.
-                item = json.loads(response.strip())
+            item = _parse_score_response(response)
             if item:
                 prediction = {
                     "score": max(0, min(100, int(item.get("score", 0)))),
