@@ -16,27 +16,52 @@ class TaskAgent(AgentSystem):
                 - new_msg_history (list): A list of messages representing the message history of the interaction.
         """
         domain = inputs['domain']
-        instruction = f"""You are an agent.
+        problem_statement = inputs.get('problem_statement', '')
+        git_tempdir = inputs.get('git_tempdir', '')
+        base_commit = inputs.get('base_commit', '')
+        test_description = inputs.get('test_description', '')
+        language = inputs.get('language', '')
 
-Task input:
-```
-{inputs}
-```
+        instruction = f"""You are an autonomous coding agent. Your task is to solve the given problem by modifying the codebase in `{git_tempdir}`.
 
-Respond in JSON format with the following schema:
+Problem statement:
+{problem_statement}
+
+Base commit: {base_commit}
+Language: {language or 'unknown'}
+Test description (if any): {test_description or 'none'}
+
+You have access to bash and file editing tools. Work in the provided repository to implement a solution. Make the necessary code changes, run tests if possible, and ensure your changes are complete.
+
+After you finish making changes, respond in JSON format with the following schema:
 <json>
 {{
-    "response": ...
+    "response": "A brief summary of the changes you made and the final prediction/answer if applicable."
 }}
 </json>"""
-        new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log)
+        new_msg_history = chat_with_agent(
+            instruction,
+            model=self.model,
+            msg_history=[],
+            logging=self.log,
+            tools_available='all',
+            multiple_tool_calls=True,
+            max_tool_calls=50,
+        )
 
-        # Extract the response
+        # Extract the response (look for the last JSON with 'response' key)
         prediction = "None"
         try:
-            extracted_jsons = extract_jsons(new_msg_history[-1]['text'])
-            if extracted_jsons is not None and "response" in extracted_jsons[-1]:
-                prediction = extracted_jsons[-1]['response']
+            for msg in reversed(new_msg_history):
+                if 'text' in msg:
+                    extracted_jsons = extract_jsons(msg['text'])
+                    if extracted_jsons:
+                        for extracted in reversed(extracted_jsons):
+                            if isinstance(extracted, dict) and "response" in extracted:
+                                prediction = extracted['response']
+                                break
+                    if prediction != "None":
+                        break
         except Exception as e:
             self.log(f"Error extracting prediction: {e}")
             prediction = "None"
