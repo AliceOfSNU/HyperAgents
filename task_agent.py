@@ -16,20 +16,34 @@ class TaskAgent(AgentSystem):
                 - new_msg_history (list): A list of messages representing the message history of the interaction.
         """
         domain = inputs['domain']
-        instruction = f"""You are an agent.
+        repo_path = inputs.get('git_tempdir', '.')  # The repository the agent should modify
+        instruction = f"""You are an agent that solves a coding task by directly modifying the repository at `{repo_path}`.
 
 Task input:
 ```
 {inputs}
 ```
 
-Respond in JSON format with the following schema:
+You have access to a bash shell and an editor. Follow this process:
+1. Explore the repository at `{repo_path}` (e.g. `view` files, `bash` to list and inspect).
+2. Identify what code changes are needed to solve the problem.
+3. Make focused edits to the repository using the `editor` tool (or `bash` for commands like running tests).
+4. Iterate until you are confident the solution works.
+5. Finally, respond in JSON format with the following schema (and nothing else after it):
 <json>
 {{
-    "response": ...
+    "response": "a concise summary of the changes you made"
 }}
-</json>"""
-        new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log)
+</json>
+
+Do NOT attempt to create the patch file yourself; the harness will compute the diff from the repository after you finish."""
+        new_msg_history = chat_with_agent(
+            instruction,
+            model=self.model,
+            msg_history=[],
+            logging=self.log,
+            tools_available='all',
+        )
 
         # Extract the response
         prediction = "None"

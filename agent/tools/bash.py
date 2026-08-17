@@ -64,46 +64,60 @@ class BashSession:
             raise ValueError(
                 f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
             )
-        
-        # Send command
+
+        # Send command followed by sentinel echo
         self._process.stdin.write(
             command.encode() + f"; echo '{self._sentinel}'\n".encode()
         )
         await self._process.stdin.drain()
 
-        # Read output until sentinel
+        output_lines = []
+        error_lines = []
+        start_time = asyncio.get_event_loop().time()
+
+        # Read stdout until sentinel
         try:
-            output = ''
-            start_time = asyncio.get_event_loop().time()
-            
             while True:
                 if asyncio.get_event_loop().time() - start_time > self._timeout:
                     self._timed_out = True
                     raise ValueError(
                         f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
                     )
-                
-                await asyncio.sleep(self._output_delay)
-                # Read from the internal buffer
-                stdout_data = self._process.stdout._buffer.decode(errors='ignore')
-                stderr_data = self._process.stderr._buffer.decode(errors='ignore')
-                
-                if self._sentinel in stdout_data:
-                    output = stdout_data[: stdout_data.index(self._sentinel)]
+                try:
+                    line = await asyncio.wait_for(self._process.stdout.readline(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    continue
+                if not line:
+                    # EOF; stop
                     break
-
-            # Clear buffers
-            self._process.stdout._buffer.clear()
-            self._process.stderr._buffer.clear()
-
-            output = output.strip()
-            error = stderr_data.strip()
-
-            return output, error
-
+                text = line.decode(errors='ignore')
+                if self._sentinel in text:
+                    # Remove sentinel and any trailing text
+                    idx = text.index(self._sentinel)
+                    if idx > 0:
+                        output_lines.append(text[:idx])
+                    break
+                output_lines.append(text)
         except Exception as e:
             self._timed_out = True
             raise ValueError(str(e))
+
+        # Read any remaining stderr (non-blocking)
+        try:
+            while True:
+                try:
+                    line = await asyncio.wait_for(self._process.stderr.readline(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    break
+                if not line:
+                    break
+                error_lines.append(line.decode(errors='ignore'))
+        except Exception:
+            pass
+
+        output = ''.join(output_lines).strip()
+        error = ''.join(error_lines).strip()
+        return output, error
 
 def filter_error(error):
     # Filter out errors that we do not want to see
@@ -128,10 +142,20 @@ def filter_error(error):
         i += 1
     return '\n'.join(filtered_lines).strip()
 
+# Global session so state persists across separate tool calls, matching the
+# tool description's promise: "State is persistent across command calls".
+_global_bash_session = None
+
+def get_bash_session():
+    global _global_bash_session
+    if _global_bash_session is None:
+        _global_bash_session = BashSession()
+    return _global_bash_session
+
 async def tool_function_call(command):
     """Execute a command in the bash shell."""
     try:
-        bash_session = BashSession()
+        bash_session = get_bash_session()
 
         if not bash_session._started:
             await bash_session.start()
