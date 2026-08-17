@@ -25,130 +25,26 @@ def tool_info():
     }
 
 class BashSession:
-    """A session of a bash shell."""
-    def __init__(self):
-        self._started = False
-        self._process = None
-        self._timed_out = False
-        self._timeout = 120.0  # seconds
-        self._sentinel = "<<exit>>"
-        self._output_delay = 0.2  # seconds
-
-    async def start(self):
-        if self._started:
-            return
-        self._process = await asyncio.create_subprocess_shell(
-            "/bin/bash -i",
-            preexec_fn=os.setsid,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy()  # Ensures inheritance of the current environment
+    """A simple synchronous bash session."""
+    def run(self, command):
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=os.getcwd(),
         )
-        self._started = True
-
-    def stop(self):
-        if not self._started:
-            return
-        if self._process.returncode is None:
-            self._process.terminate()
-        self._process = None
-        self._started = False
-
-    async def run(self, command):
-        if not self._started:
-            raise ValueError("Session has not started.")
-        if self._process.returncode is not None:
-            raise ValueError(f"Bash has exited with returncode {self._process.returncode}")
-        if self._timed_out:
-            raise ValueError(
-                f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
-            )
-        
-        # Send command
-        self._process.stdin.write(
-            command.encode() + f"; echo '{self._sentinel}'\n".encode()
-        )
-        await self._process.stdin.drain()
-
-        # Read output until sentinel
-        try:
-            output = ''
-            start_time = asyncio.get_event_loop().time()
-            
-            while True:
-                if asyncio.get_event_loop().time() - start_time > self._timeout:
-                    self._timed_out = True
-                    raise ValueError(
-                        f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
-                    )
-                
-                await asyncio.sleep(self._output_delay)
-                # Read from the internal buffer
-                stdout_data = self._process.stdout._buffer.decode(errors='ignore')
-                stderr_data = self._process.stderr._buffer.decode(errors='ignore')
-                
-                if self._sentinel in stdout_data:
-                    output = stdout_data[: stdout_data.index(self._sentinel)]
-                    break
-
-            # Clear buffers
-            self._process.stdout._buffer.clear()
-            self._process.stderr._buffer.clear()
-
-            output = output.strip()
-            error = stderr_data.strip()
-
-            return output, error
-
-        except Exception as e:
-            self._timed_out = True
-            raise ValueError(str(e))
-
-def filter_error(error):
-    # Filter out errors that we do not want to see
-    filtered_lines = []
-    i = 0
-    error_lines = error.splitlines()
-    while i < len(error_lines):
-        line = error_lines[i]
-
-        # Skip the next lines if ioctl error, add relevant lines
-        if "Inappropriate ioctl for device" in line:
-            i += 3
-            if '<<exit>>' in error_lines[i]:
-                i += 1
-            while i < len(error_lines) - 1:
-                filtered_lines.append(error_lines[i])
-                i += 1
-            i += 1
-            continue
-
-        filtered_lines.append(line)
-        i += 1
-    return '\n'.join(filtered_lines).strip()
-
-async def tool_function_call(command):
-    """Execute a command in the bash shell."""
-    try:
-        bash_session = BashSession()
-
-        if not bash_session._started:
-            await bash_session.start()
-
-        output, error = await bash_session.run(command)
-        error = filter_error(error)
-        result = ""
-        if output:
-            result += output
-        if error:
-            result += "\nError:\n" + error
-        return result.strip()
-    except Exception as e:
-        return f"Error: {str(e)}"
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+        if result.returncode != 0 and error:
+            output = output + "\nError:\n" + error if output else "Error:\n" + error
+        return output
 
 def tool_function(command):
-    return asyncio.run(tool_function_call(command))
+    try:
+        return BashSession().run(command)
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 if __name__ == "__main__":
     # Example usage
