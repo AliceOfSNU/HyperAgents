@@ -1,83 +1,20 @@
-import re
-import json
-
 from agent.llm import get_response_from_llm
 from agent.tools import load_tools
 
-def get_tooluse_prompt(tool_infos=[]):
-    """
-    Get the prompt for using the available tools.
-    """
-    # If no tools are available, return an empty string
-    if not tool_infos or len(tool_infos) == 0:
-        return ""
-    # Create the prompt
-    tools_available = [str(tool_info) for tool_info in tool_infos]
-    tools_available = '\n\n'.join(tools_available) if tools_available else 'None'
-    tooluse_prompt = """Here are the available tools:
-```
-{tools_available}
-```
 
-Use only one tool (if needed) in this format:
-<json>
-{{
-    "tool_name": ...,
-    "tool_input": ...
-}}
-</json>
+def _to_litellm_tool(tool_info):
+    """Convert this codebase's tool_info() shape (name/description/input_schema,
+    already a proper JSON schema -- see e.g. agent/tools/edit.py) into the
+    OpenAI/litellm function-calling tool format."""
+    return {
+        "type": "function",
+        "function": {
+            "name": tool_info["name"],
+            "description": tool_info["description"],
+            "parameters": tool_info["input_schema"],
+        },
+    }
 
-ONLY USE ONE TOOL PER RESPONSE, AND STRICTLY FOLLOW THE FORMAT OF TOOL_NAME AND TOOL_INPUT ABOVE.
-DO NOT HALLUCINATE OR MAKE UP ANYTHING.
-""".format(tools_available=tools_available)
-    return tooluse_prompt.strip()
-
-def should_retry_tool_use(response, tool_uses=None):
-    """
-    Check if the response attempts to use a tool,
-    but ran out of output context.
-    """
-    # If there are tool uses, we don't need to check for retry
-    if tool_uses is not None and len(tool_uses) > 0:
-        return False
-
-    # Find positions of the markers
-    json_pos = response.find("<json>")
-    tool_name_pos = response.find("tool_name")
-    tool_input_pos = response.find("tool_input")
-
-    # Check ordering and length condition
-    if (
-        json_pos != -1
-        and tool_name_pos != -1
-        and tool_input_pos != -1
-        and json_pos < tool_name_pos < tool_input_pos
-        and len(response) >= 2000
-    ):
-        return True
-
-    # No retry
-    return False
-
-def check_for_tool_uses(response):
-    """
-    Checks if the response contains one or more tool calls in json code blocks.
-    Returns a list of tool use dictionaries.
-    """
-    pattern = r'<json>\s*(\{.*?\})\s*</json>'
-    matches = re.findall(pattern, response, re.DOTALL)
-    tool_uses = []
-
-    for match in matches:
-        try:
-            tool_use = json.loads(match)
-            if 'tool_name' not in tool_use or 'tool_input' not in tool_use:
-                continue  # Skip invalid tool use
-            tool_uses.append(tool_use)
-        except json.JSONDecodeError:
-            continue  # Skip malformed JSON blocks
-
-    return tool_uses if tool_uses else None
 
 def process_tool_call(tools_dict, tool_name, tool_input):
     try:
@@ -88,6 +25,7 @@ def process_tool_call(tools_dict, tool_name, tool_input):
     except Exception as e:
         return f"Error executing tool '{tool_name}': {str(e)}"
 
+
 def chat_with_agent(
     msg,
     model="claude-4-sonnet-genai",
@@ -97,75 +35,122 @@ def chat_with_agent(
     multiple_tool_calls=False,  # Whether to allow multiple tool calls in a single response
     max_tool_calls=40,  # Maximum number of tool calls allowed in a single response, -1 for unlimited
 ):
+    """Uses the model provider's native function-calling (via litellm's
+    `tools=` parameter) rather than a prompt-engineered text format. Real
+    runs surfaced three distinct failure shapes from a free-text
+    `<json>{"tool_name": ...}</json>` convention -- missing wrapper tags,
+    corrupted closing tags, and an entirely different tool-call syntax the
+    model substituted on its own -- all from the model simply not reliably
+    reproducing arbitrary formatting instructions. Native tool-calling moves
+    that enforcement into the provider's own constrained decoding, so there's
+    no text convention left for the model to get wrong."""
     get_response_fn = get_response_from_llm
-    # Construct message
     if msg_history is None:
         msg_history = []
     new_msg_history = msg_history
 
     try:
-        # Load all tools
         all_tools = load_tools(logging=logging, names=tools_available)
         tools_dict = {tool['info']['name']: tool for tool in all_tools}
-        system_msg = f"{get_tooluse_prompt([tool['info'] for tool in all_tools])}\n\n"
+        litellm_tools = [_to_litellm_tool(tool['info']) for tool in all_tools] or None
         num_tool_calls = 0
+
+        # Tell the model its own tool-call ceiling up front -- previously
+        # this was purely a silent harness-side cap: the model had no way to
+        # know one existed until it was already cut off. Observed live,
+        # repeatedly: full budgets spent entirely on read-only exploration
+        # before ever acting, then cut off mid-investigation with no warning.
+        if max_tool_calls > 0 and all_tools:
+            msg = f"{msg}\n\n[You have up to {max_tool_calls} tool calls available for this task -- plan accordingly.]"
 
         # Call API
         logging(f"Input: {repr(msg)}")
         response, new_msg_history, info = get_response_fn(
-            msg=system_msg + msg,
+            msg=msg,
             model=model,
             msg_history=new_msg_history,
+            tools=litellm_tools,
         )
         logging(f"Output: {repr(response)}")
-        # logging(f"Info: {repr(info)}")
+        tool_calls = info.get("tool_calls") or []
 
-        # Tool use
-        tool_uses = check_for_tool_uses(response)
-        retry_tool_use = should_retry_tool_use(response, tool_uses)
-        while tool_uses or retry_tool_use:
+        # A response cut off mid-generation (e.g. hit max_tokens) may carry no
+        # tool_calls at all, or an incomplete one -- ask the model to retry
+        # rather than silently treating a truncated response as final.
+        if info.get("finish_reason") == "length" and not tool_calls:
+            logging("Error: Output context exceeded. Please try again.")
+            response, new_msg_history, info = get_response_fn(
+                msg="Error: Output context exceeded. Please try again.",
+                model=model,
+                msg_history=new_msg_history,
+                tools=litellm_tools,
+            )
+            logging(f"Output: {repr(response)}")
+            tool_calls = info.get("tool_calls") or []
+
+        while tool_calls:
             # Check for max tool calls
             if max_tool_calls > 0 and num_tool_calls >= max_tool_calls:
                 logging("Error: Maximum number of tool calls reached.")
+                # The assistant message already in new_msg_history still has
+                # these tool_calls attached and unanswered -- the API rejects
+                # any later message on this history until every tool_call_id
+                # gets a matching "tool" response. Answer them here instead of
+                # just breaking, or the returned history is left invalid for
+                # any caller that resumes it later (confirmed live: exactly
+                # what broke task_agent.py's own continuation pass, which
+                # reuses this history when the first pass ends without a
+                # report -- "insufficient tool messages following tool_calls
+                # message").
+                new_msg_history = new_msg_history + [
+                    {"role": "tool", "tool_call_id": call["id"], "text": "Skipped: maximum tool call budget reached."}
+                    for call in tool_calls
+                ]
                 break
 
-            tool_msgs = []
+            calls_to_run = tool_calls if multiple_tool_calls else tool_calls[:1]
+            tool_result_msgs = []
 
-            # Process tool uses
-            if tool_uses:
-                tool_uses = tool_uses if multiple_tool_calls else tool_uses[:1]
-                for tool_use in tool_uses:
-                    tool_name = tool_use['tool_name']
-                    tool_input = tool_use['tool_input']
-                    tool_output = process_tool_call(tools_dict, tool_name, tool_input)
-                    num_tool_calls += 1
-                    tool_msg = f'''<json>
-    {{
-        "tool_name": "{tool_name}",
-        "tool_input": {tool_input},
-        "tool_output": "{tool_output}"
-    }}
-    </json>'''.strip()
-                    logging(f"Tool output: {repr(tool_msg)}")
-                    tool_msgs.append(tool_msg)
+            for call in calls_to_run:
+                tool_name = call["name"]
+                tool_input = call["arguments"]
+                tool_output = process_tool_call(tools_dict, tool_name, tool_input)
+                num_tool_calls += 1
+                logging(f"Tool output: {tool_name}({tool_input}) -> {repr(tool_output)}")
+                tool_result_msgs.append({
+                    "role": "tool", "tool_call_id": call["id"], "text": str(tool_output),
+                })
 
-            # Check for retry
-            if retry_tool_use:
-                logging("Error: Output context exceeded. Please try again.")
-                tool_msgs.append("Error: Output context exceeded. Please try again.")
+            # The API requires a "tool" response for every tool_call_id the
+            # model emitted this turn, even ones not executed here (when
+            # multiple_tool_calls=False truncates to just the first) --
+            # otherwise the next request fails validation over the orphaned call.
+            executed_ids = {call["id"] for call in calls_to_run}
+            for call in tool_calls:
+                if call["id"] not in executed_ids:
+                    tool_result_msgs.append({
+                        "role": "tool", "tool_call_id": call["id"],
+                        "text": "Skipped: only one tool call is processed per turn.",
+                    })
 
-            # Get tool response
+            # Keep the running remaining-budget count visible after every
+            # round (not just at the start) -- appended to the last tool
+            # result of this round since the model reads every "tool"
+            # message from a round together before its next turn.
+            if max_tool_calls > 0:
+                remaining = max_tool_calls - num_tool_calls
+                tool_result_msgs[-1]["text"] += f"\n\n[{remaining} of {max_tool_calls} tool calls remaining -- plan accordingly.]"
+
+            # Get tool response -- msg=None: the tool-result messages above
+            # are the continuation, not a new user turn.
             response, new_msg_history, info = get_response_fn(
-                msg=system_msg + '\n\n'.join(tool_msgs),
+                msg=None,
                 model=model,
-                msg_history=new_msg_history,
+                msg_history=new_msg_history + tool_result_msgs,
+                tools=litellm_tools,
             )
             logging(f"Output: {repr(response)}")
-            # logging(f"Info: {repr(info)}")
-
-            # Check for next tool use
-            tool_uses = check_for_tool_uses(response)
-            retry_tool_use = should_retry_tool_use(response, tool_uses)
+            tool_calls = info.get("tool_calls") or []
 
     except Exception as e:
         logging(f"Error: {str(e)}")

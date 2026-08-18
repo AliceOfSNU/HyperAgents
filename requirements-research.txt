@@ -1,0 +1,16 @@
+# Minimal deps for run_task_agent.py / run_evaluator_agent.py inside the
+# sandboxed per-task container, mirroring requirements-polyglot.txt's slim
+# pattern: this is not the full requirements.txt (torch/Genesis/balrog/etc
+# are irrelevant here and installing all of that in every parallel per-task
+# container is wasteful). A small data-science baseline is included so the
+# research agent doesn't have to pip-install these from scratch on every
+# task; it can still install anything else it needs at runtime.
+litellm==1.74.9
+backoff==2.2.1
+requests==2.32.4
+dotenv==0.9.9
+GitPython==3.1.44
+pandas==2.3.2
+numpy
+matplotlib==3.10.3
+scipy
