@@ -79,6 +79,65 @@ def check_for_tool_uses(response):
 
     return tool_uses if tool_uses else None
 
+# Max number of extra "keep going" nudges chat_with_agent will spend on the
+# two stalled-turn patterns below, per call. Bounded so a persistently
+# confused model can't loop forever; doesn't count against max_tool_calls
+# since no tool was actually invoked.
+MAX_STALL_NUDGES = 2
+
+# Conversational closers that legitimately start with these words but are
+# not a stalled action plan (e.g. "Let me know if you have questions").
+_STALLED_INTENT_EXCLUSIONS = ("let me know",)
+
+_STALLED_INTENT_PHRASES = (
+    "let me ", "let's ", "i will ", "i'll ", "i am going to ", "i'm going to ",
+    "next, i ", "next i'll", "next i will",
+)
+
+def _looks_like_malformed_tool_call(response, tool_uses):
+    """A response that clearly attempted a tool call (has the
+    <json>/tool_name/tool_input markers, in order) but check_for_tool_uses
+    still failed to parse it -- e.g. extra content the model inserted
+    before the closing </json> tag. Broader than should_retry_tool_use's
+    truncation check above (no length gate): this can happen on a short,
+    complete-looking response too, not just a context-truncated one."""
+    if tool_uses:
+        return False
+    json_pos = response.find("<json>")
+    tool_name_pos = response.find("tool_name")
+    tool_input_pos = response.find("tool_input")
+    return (
+        json_pos != -1
+        and tool_name_pos != -1
+        and tool_input_pos != -1
+        and json_pos < tool_name_pos < tool_input_pos
+    )
+
+def _looks_like_stalled_intent(response):
+    """A response that narrates an intended next action ("Let me rewrite
+    X...") but never actually emits the tool call to do it -- observed in
+    real self-improvement runs where a model spends a whole turn on
+    exploration/reasoning and then trails off instead of continuing in the
+    same turn. Deliberately narrow: only fires when there's no tool call
+    anywhere in the response and the response's own final paragraph is the
+    one making the forward-looking claim, so a genuine "I'm done" wrap-up
+    that happens to mention future work in passing (earlier in the
+    response) doesn't trigger it."""
+    if "<json>" in response:
+        return False
+    tail = response.strip()
+    if not tail:
+        return False
+    # Last paragraph/line, not last "sentence" split on '.' -- a period
+    # inside a file path or module name (e.g. "agent/tools/bash.py") is not
+    # a sentence boundary, and splitting on it would wrongly cut the
+    # forward-looking clause in half.
+    pieces = re.split(r'\n+', tail)
+    last = next((p.strip().lower() for p in reversed(pieces) if p.strip()), "")
+    if any(excl in last for excl in _STALLED_INTENT_EXCLUSIONS):
+        return False
+    return any(phrase in last for phrase in _STALLED_INTENT_PHRASES)
+
 def process_tool_call(tools_dict, tool_name, tool_input):
     try:
         if tool_name in tools_dict:
@@ -109,6 +168,7 @@ def chat_with_agent(
         tools_dict = {tool['info']['name']: tool for tool in all_tools}
         system_msg = f"{get_tooluse_prompt([tool['info'] for tool in all_tools])}\n\n"
         num_tool_calls = 0
+        num_stall_nudges = 0
 
         # Call API
         logging(f"Input: {repr(msg)}")
@@ -123,7 +183,30 @@ def chat_with_agent(
         # Tool use
         tool_uses = check_for_tool_uses(response)
         retry_tool_use = should_retry_tool_use(response, tool_uses)
-        while tool_uses or retry_tool_use:
+
+        def _stall_nudge():
+            # Only meaningful when this agent actually has tools -- with no
+            # tools loaded, there's nothing to nudge it to call.
+            if not all_tools or num_stall_nudges >= MAX_STALL_NUDGES:
+                return None
+            if _looks_like_malformed_tool_call(response, tool_uses):
+                return (
+                    "Error: Your tool call could not be parsed. Make sure the "
+                    "<json>...</json> block contains nothing but the tool call "
+                    "object, with </json> immediately after the closing brace and "
+                    "no other tags or text in between. Please retry the tool call."
+                )
+            if _looks_like_stalled_intent(response):
+                return (
+                    "You described an intended next action but did not actually "
+                    'invoke a tool in this response. If you still intend to take '
+                    'that action, emit the <json>{"tool_name": ..., "tool_input": '
+                    "...}</json> tool call now. If you are actually finished, say so explicitly."
+                )
+            return None
+
+        stall_nudge = None if (tool_uses or retry_tool_use) else _stall_nudge()
+        while tool_uses or retry_tool_use or stall_nudge:
             # Check for max tool calls
             if max_tool_calls > 0 and num_tool_calls >= max_tool_calls:
                 logging("Error: Maximum number of tool calls reached.")
@@ -154,6 +237,15 @@ def chat_with_agent(
                 logging("Error: Output context exceeded. Please try again.")
                 tool_msgs.append("Error: Output context exceeded. Please try again.")
 
+            # No parseable tool call, but the response looks like an
+            # aborted/malformed attempt rather than a genuine final answer --
+            # nudge instead of silently ending the session (doesn't count
+            # against max_tool_calls; bounded separately by MAX_STALL_NUDGES).
+            if not tool_uses and not retry_tool_use and stall_nudge:
+                num_stall_nudges += 1
+                logging(f"Detected a likely unfinished/malformed tool-call attempt (nudge {num_stall_nudges}/{MAX_STALL_NUDGES}): {stall_nudge}")
+                tool_msgs.append(stall_nudge)
+
             # Get tool response
             response, new_msg_history, info = get_response_fn(
                 msg=system_msg + '\n\n'.join(tool_msgs),
@@ -166,6 +258,7 @@ def chat_with_agent(
             # Check for next tool use
             tool_uses = check_for_tool_uses(response)
             retry_tool_use = should_retry_tool_use(response, tool_uses)
+            stall_nudge = None if (tool_uses or retry_tool_use) else _stall_nudge()
 
     except Exception as e:
         logging(f"Error: {str(e)}")
