@@ -123,6 +123,7 @@ def chat_with_agent(
         # Tool use
         tool_uses = check_for_tool_uses(response)
         retry_tool_use = should_retry_tool_use(response, tool_uses)
+
         while tool_uses or retry_tool_use:
             # Check for max tool calls
             if max_tool_calls > 0 and num_tool_calls >= max_tool_calls:
