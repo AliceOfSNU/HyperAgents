@@ -37,6 +37,12 @@ def main():
         help="The number of remaining iterations in which the meta agent will be invoked in future.",
     )
     parser.add_argument(
+        "--parent_genid",
+        type=int,
+        default=None,
+        help="The generation id this run is building on top of, so the agent can locate its own parent's prior attempt within --evals_folder.",
+    )
+    parser.add_argument(
         "--git_dir", required=True, help="Path to git repository directory"
     )
     parser.add_argument(
@@ -56,6 +62,7 @@ def main():
         repo_path=args.repo_path,
         eval_path=args.evals_folder,
         iterations_left=args.iterations_left,
+        parent_genid=args.parent_genid,
     )
 
     # Reset unwanted diffs

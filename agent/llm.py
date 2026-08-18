@@ -36,28 +36,45 @@ litellm.drop_params=True
     max_value=60,
 )
 def get_response_from_llm(
-    msg: str,
+    msg,
     model: str = OPENAI_MODEL,
     temperature: float = 0.0,
     max_tokens: int = MAX_TOKENS,
     msg_history=None,
+    tools=None,
+    tool_choice="auto",
 ) -> Tuple[str, list, dict]:
+    """`msg=None` skips appending a new user turn and just sends msg_history
+    as-is -- used by chat_with_agent to continue a conversation after
+    appending tool-result messages, without inventing an extra user turn.
+
+    `tools`, if given, is a list of OpenAI/litellm-format function-calling
+    tool definitions (`{"type": "function", "function": {"name", "description",
+    "parameters"}}`). When provided, the returned info dict carries
+    `tool_calls` (a normalized `[{"id", "name", "arguments"}, ...]`, "arguments"
+    already parsed from JSON) and `finish_reason`, and the assistant message
+    appended to history carries the provider's own raw `tool_calls` alongside
+    `text` -- needed verbatim on the next call so the API can match up the
+    "tool" role responses that follow it."""
     if msg_history is None:
         msg_history = []
 
     # Convert text to content, compatible with LITELLM API
     msg_history = [
-        {**msg, "content": msg.pop("text")} if "text" in msg else msg
-        for msg in msg_history
+        {**m, "content": m.pop("text")} if "text" in m else m
+        for m in msg_history
     ]
 
-    new_msg_history = msg_history + [{"role": "user", "content": msg}]
+    new_msg_history = msg_history if msg is None else msg_history + [{"role": "user", "content": msg}]
 
     # Build kwargs - handle model-specific requirements
     completion_kwargs = {
         "model": model,
         "messages": new_msg_history,
     }
+    if tools:
+        completion_kwargs["tools"] = tools
+        completion_kwargs["tool_choice"] = tool_choice
 
     # GPT-5 and GPT-5-mini only support default temperature (1), skip it
     # GPT-5.2 supports temperature
@@ -77,16 +94,36 @@ def get_response_from_llm(
             completion_kwargs["max_tokens"] = max_tokens
 
     response = litellm.completion(**completion_kwargs)
-    response_text = response['choices'][0]['message']['content']  # pyright: ignore
-    new_msg_history.append({"role": "assistant", "content": response['choices'][0]['message']['content']})
+    message = response['choices'][0]['message']  # pyright: ignore
+    response_text = message.get("content") or ""
+    finish_reason = response['choices'][0].get("finish_reason")  # pyright: ignore
+
+    assistant_msg = {"role": "assistant", "content": message.get("content")}
+    raw_tool_calls = message.get("tool_calls") or []
+    parsed_tool_calls = []
+    if raw_tool_calls:
+        # Preserved verbatim (not re-serialized) -- the API needs to see
+        # exactly what the model emitted on the next call, to match it up
+        # against the "tool" role responses that will follow it.
+        assistant_msg["tool_calls"] = raw_tool_calls
+        for tc in raw_tool_calls:
+            try:
+                arguments = json.loads(tc["function"]["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            parsed_tool_calls.append({
+                "id": tc["id"], "name": tc["function"]["name"], "arguments": arguments,
+            })
+
+    new_msg_history.append(assistant_msg)
 
     # Convert content to text, compatible with MetaGen API
     new_msg_history = [
-        {**msg, "text": msg.pop("content")} if "content" in msg else msg
-        for msg in new_msg_history
+        {**m, "text": m.pop("content")} if "content" in m else m
+        for m in new_msg_history
     ]
 
-    return response_text, new_msg_history, {}
+    return response_text, new_msg_history, {"tool_calls": parsed_tool_calls, "finish_reason": finish_reason}
 
 
 if __name__ == "__main__":
