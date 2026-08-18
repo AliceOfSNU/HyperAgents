@@ -281,7 +281,7 @@ def setup_initial_gen(
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
     }
-    if "polyglot" not in domains:
+    if "polyglot" not in domains and "research" not in domains:
         excluded_files.add("run_task_agent.py")
     excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*"]
     if "ensemble" not in optimize_option or not any(can_domain_ensembled(d) for d in domains) and not copy_root_dir:
