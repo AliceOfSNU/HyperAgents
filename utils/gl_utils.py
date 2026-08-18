@@ -272,6 +272,15 @@ def setup_initial_gen(
         "misc",
         "baselines",
         "domains",
+        # setup_initial_gen copies the live filesystem, not a git-tracked
+        # snapshot -- .gitignore never applies here, so anything holding
+        # real credentials has to be excluded explicitly or it lands
+        # directly inside every generation's container, readable (and,
+        # since agents have fetch_url, exfiltratable) by the meta-agent.
+        # Confirmed live: a real run's meta-agent read /hyperagents/.env
+        # during routine exploration (never misused it, but nothing stopped
+        # it from being able to).
+        ".dashboard_secrets",
     }
     excluded_files = {
         "Dockerfile",
@@ -280,10 +289,11 @@ def setup_initial_gen(
         "LICENSE.md",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
+        ".env",
     }
-    if "polyglot" not in domains:
+    if "polyglot" not in domains and "research" not in domains:
         excluded_files.add("run_task_agent.py")
-    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*"]
+    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*", "client_secret*.json*"]
     if "ensemble" not in optimize_option or not any(can_domain_ensembled(d) for d in domains) and not copy_root_dir:
         excluded_patterns.append("*ensemble*")
     if not edit_select_parent and not copy_root_dir:

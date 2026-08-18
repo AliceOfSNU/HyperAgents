@@ -1,0 +1,13 @@
+# Minimal deps for run_task_agent.py inside a Polyglot per-task container.
+# The full requirements.txt pulls in torch/Genesis/balrog/minihack/nle etc.,
+# none of which task-solving code needs -- installing all of that in every
+# ephemeral per-task container (up to --max_workers of them in parallel) is
+# pure waste and was observed to destabilize the host (see incident notes:
+# WSL crashed mid-run while 5 containers simultaneously installed the full
+# requirements.txt). Keep this in sync with requirements.txt's pins for:
+# litellm, backoff, requests, dotenv, GitPython.
+litellm==1.74.9
+backoff==2.2.1
+requests==2.32.4
+dotenv==0.9.9
+GitPython==3.1.44
