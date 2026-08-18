@@ -660,3 +660,39 @@ def cleanup_container(container, verbose=True):
             level=logging.ERROR,
             verbose=verbose,
         )
+
+
+def reclaim_host_ownership(docker_client, host_path, verbose=True):
+    """Fix root-owned files a bind-mounted container left behind on the host.
+
+    Containers run as root by default, and a bind mount shares the host
+    filesystem directly -- so any file a container writes into a bind-mounted
+    directory (e.g. a container-side `git commit` against a live-mounted
+    root_dir, see utils/gl_utils.py's apply_diffs_container) lands on the
+    host owned by root. That silently breaks any later *host-side* operation
+    needing write access there -- concretely, utils/pr_review.py's PR-branch
+    worktree shares root_dir's own .git/objects store, and a host-side
+    `git add` fails with "insufficient permission for adding an object to
+    repository database" if the container's commit happened to create
+    objects under a hash-prefix directory that's now root-owned.
+
+    Since we generally don't have passwordless host sudo to chown directly,
+    this runs a throwaway root container that bind-mounts the same path and
+    chowns it back to the current (non-root) host user/group -- the same
+    privilege level that caused the problem, used to reverse it.
+    """
+    abs_path = os.path.abspath(str(host_path))
+    uid, gid = os.getuid(), os.getgid()
+    try:
+        docker_client.containers.run(
+            "alpine",
+            ["chown", "-R", f"{uid}:{gid}", "/fixpath"],
+            volumes={abs_path: {"bind": "/fixpath", "mode": "rw"}},
+            remove=True,
+        )
+    except Exception as e:
+        safe_log(
+            f"Error reclaiming host ownership of {abs_path}: {e}",
+            level=logging.WARNING,
+            verbose=verbose,
+        )
