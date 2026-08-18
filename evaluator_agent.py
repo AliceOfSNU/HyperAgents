@@ -59,6 +59,60 @@ Use this when the criterion involves theoretical explanations, mechanistic insig
 - Be strict but fair.
 """
 
+# Same system prompt used by the trusted Claude scorer
+# (domains/research/claude_scorer.py). The evaluator's value is agreement with
+# that scorer's fixed anchor, so keeping every prompt component as close as
+# possible to the anchor judge minimizes avoidable mismatch from formatting
+# and framing differences.
+JUDGE_SYSTEM_PROMPT = (
+    "You are a strict scientific peer reviewer evaluating AI-generated research. "
+    "Score the report against the criterion only — do not attempt to solve the "
+    "research task yourself."
+)
+
+
+def _build_evaluator_prompt(report_text, instructions, criterion, keywords):
+    keywords_str = ", ".join(keywords) if keywords else "None specified"
+    return f"""{RUBRIC}
+
+## Research Task Background (INSTRUCTIONS.md given to the AI agent)
+{instructions}
+
+## Evaluation Criterion (from the original paper)
+{criterion}
+
+## Key Technical Aspects to Verify
+{keywords_str}
+
+## AI-Generated Research Report
+{report_text}
+
+## Task
+Rate how well this report addresses the criterion compared to the original paper.
+First determine if this criterion is Objective (Mode A) or Subjective (Mode B), then apply the corresponding rubric strictly.
+
+Return your answer as a JSON object: {{"reasoning": "<2-3 sentences>", "score": <0-100>}}"""
+
+
+def _parse_score_response(response):
+    """Extract a score/reasoning dict from any plausible judge response."""
+    try:
+        extracted = extract_jsons(response)
+        if extracted:
+            return extracted[-1]
+    except Exception:
+        pass
+
+    # Some backends ignore the <json> wrapper or return text around the JSON.
+    # Match claude_scorer's own fallback: parse the first {...} span in the
+    # raw response.
+    try:
+        start = response.index("{")
+        end = response.rindex("}") + 1
+        return json.loads(response[start:end])
+    except Exception:
+        return None
+
 
 class EvaluatorAgent(AgentSystem):
     def forward(self, inputs):
@@ -74,67 +128,26 @@ class EvaluatorAgent(AgentSystem):
         Its own score on any given report never affects its own promotion,
         only agreement with that anchor does, so there's no direct incentive
         to grade leniently.
-
-        Args:
-            inputs (dict): {
-                "report_text": str,
-                "instructions": str,     # INSTRUCTIONS.md background given to the task agent
-                "criterion": str,        # checklist item's "content" field
-                "keywords": list[str],   # checklist item's "keywords" field
-            }
-
-        Returns:
-            tuple:
-                - prediction (dict): {"score": int 0-100, "reasoning": str}
-                - new_msg_history (list): message history of the interaction.
         """
-        keywords_str = ", ".join(inputs.get("keywords", [])) or "None specified"
-        instruction = f"""{RUBRIC}
-
-## Research Task Background (INSTRUCTIONS.md given to the AI agent)
-{inputs.get('instructions', '')}
-
-## Evaluation Criterion (from the original paper)
-{inputs['criterion']}
-
-## Key Technical Aspects to Verify
-{keywords_str}
-
-## AI-Generated Research Report
-{inputs['report_text']}
-
-## Task
-Rate how well this report addresses the criterion compared to the original paper.
-First determine if this criterion is Objective (Mode A) or Subjective (Mode B), then apply the corresponding rubric strictly.
-
-Respond in JSON format with the following schema:
-<json>
-{{
-    "reasoning": "<2-3 sentences>",
-    "score": <integer 0-100>
-}}
-</json>"""
+        instruction = _build_evaluator_prompt(
+            report_text=inputs.get("report_text", ""),
+            instructions=inputs.get("instructions", ""),
+            criterion=inputs.get("criterion", ""),
+            keywords=inputs.get("keywords", []),
+        )
 
         response, new_msg_history, _info = get_response_from_llm(
-            msg=instruction, model=self.model, msg_history=[],
+            msg=instruction,
+            model=self.model,
+            msg_history=[],
+            system=JUDGE_SYSTEM_PROMPT,
         )
 
         prediction = {"score": 0, "reasoning": "Failed to parse evaluator response."}
-        try:
-            extracted = extract_jsons(response)
-            item = extracted[-1] if extracted else None
-            if item is None:
-                # Some backends (observed with DeepSeek) ignore the <json>
-                # wrapper and return a bare JSON object -- extract_jsons only
-                # matches <json>...</json> or ```json fences, so fall back to
-                # parsing the whole response directly.
-                item = json.loads(response.strip())
-            if item:
-                prediction = {
-                    "score": max(0, min(100, int(item.get("score", 0)))),
-                    "reasoning": str(item.get("reasoning", "")),
-                }
-        except Exception as e:
-            self.log(f"Error extracting evaluator score: {e}")
-
+        item = _parse_score_response(response)
+        if item:
+            prediction = {
+                "score": max(0, min(100, int(item.get("score", 0)))),
+                "reasoning": str(item.get("reasoning", "")),
+            }
         return prediction, new_msg_history
