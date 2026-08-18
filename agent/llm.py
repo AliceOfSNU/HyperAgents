@@ -43,6 +43,7 @@ def get_response_from_llm(
     msg_history=None,
     tools=None,
     tool_choice="auto",
+    system=None,
 ) -> Tuple[str, list, dict]:
     """`msg=None` skips appending a new user turn and just sends msg_history
     as-is -- used by chat_with_agent to continue a conversation after
@@ -55,17 +56,30 @@ def get_response_from_llm(
     already parsed from JSON) and `finish_reason`, and the assistant message
     appended to history carries the provider's own raw `tool_calls` alongside
     `text` -- needed verbatim on the next call so the API can match up the
-    "tool" role responses that follow it."""
+    "tool" role responses that follow it.
+
+    `system`, if given, is prepended as a system message. This keeps the
+    MetaGen-style history (list of dicts with a "text" key) while supporting
+    judge-style callers that want a separate system role."""
     if msg_history is None:
         msg_history = []
 
-    # Convert text to content, compatible with LITELLM API
+    # Convert text to content, compatible with LITELLM API. Build fresh dicts
+    # (rather than {**m, "content": m.pop("text")}) so the original "text" key
+    # is actually removed -- in a dict display, **m is expanded before the
+    # pop runs, so the old form left both "text" and "content" on each
+    # message, leaking a MetaGen-only key into the provider request.
     msg_history = [
-        {**m, "content": m.pop("text")} if "text" in m else m
+        {k: v for k, v in m.items() if k != "text"} | ({"content": m["text"]} if "text" in m else {})
         for m in msg_history
     ]
 
-    new_msg_history = msg_history if msg is None else msg_history + [{"role": "user", "content": msg}]
+    if system:
+        base_history = [{"role": "system", "content": system}] + msg_history
+    else:
+        base_history = msg_history
+
+    new_msg_history = base_history if msg is None else base_history + [{"role": "user", "content": msg}]
 
     # Build kwargs - handle model-specific requirements
     completion_kwargs = {
@@ -117,9 +131,10 @@ def get_response_from_llm(
 
     new_msg_history.append(assistant_msg)
 
-    # Convert content to text, compatible with MetaGen API
+    # Convert content to text, compatible with MetaGen API. Build fresh dicts
+    # so the "content" key is actually removed (same bug class as above).
     new_msg_history = [
-        {**m, "text": m.pop("content")} if "content" in m else m
+        {k: v for k, v in m.items() if k != "content"} | ({"text": m["content"]} if "content" in m else {})
         for m in new_msg_history
     ]
 
