@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/* Token system -- validated against the dataviz skill's palette validator
+   (status colors + categorical slot 1 "blue" for the running/sequential
+   role). Light is the reference surface; dark mirrors it via both the OS
+   media query and an explicit [data-theme] override, per the skill's
+   documented pattern, so a manual theme toggle always wins over OS setting. */
+:root {
+  color-scheme: light;
+  --surface-0: #fcfcfb;
+  --surface-1: #ffffff;
+  --surface-2: #f3f2ee;
+  --border: #e3e1da;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #8a887f;
+
+  --brand: #4a3aa7;
+  --brand-soft: #ece9fa;
+  --running: #2a78d6;
+  --running-soft: #e7f0fb;
+
+  --status-good: #0ca30c;
+  --status-good-soft: #e3f6e3;
+  --status-warning: #b9790a;
+  --status-warning-soft: #fdf1dc;
+  --status-critical: #d03b3b;
+  --status-critical-soft: #fbe6e6;
+
+  --seq-1: #eaf2fc;
+  --seq-2: #a9c9ef;
+  --seq-3: #5f97de;
+  --seq-4: #2a78d6;
+  --seq-5: #163a68;
+
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-0: #1a1a19;
+    --surface-1: #212120;
+    --surface-2: #2a2a28;
+    --border: #3a3a37;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e85;
+
+    --brand: #9085e9;
+    --brand-soft: #2a2550;
+    --running: #3987e5;
+    --running-soft: #16273f;
+
+    --status-good: #3fc93f;
+    --status-good-soft: #113a11;
+    --status-warning: #fab219;
+    --status-warning-soft: #4a3708;
+    --status-critical: #ec6f6f;
+    --status-critical-soft: #4a1c1c;
+
+    --seq-1: #16273f;
+    --seq-2: #1d3f6e;
+    --seq-3: #2a5fa3;
+    --seq-4: #3987e5;
+    --seq-5: #a9c9ef;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #1a1a19;
+  --surface-1: #212120;
+  --surface-2: #2a2a28;
+  --border: #3a3a37;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e85;
+
+  --brand: #9085e9;
+  --brand-soft: #2a2550;
+  --running: #3987e5;
+  --running-soft: #16273f;
+
+  --status-good: #3fc93f;
+  --status-good-soft: #113a11;
+  --status-warning: #fab219;
+  --status-warning-soft: #4a3708;
+  --status-critical: #ec6f6f;
+  --status-critical-soft: #4a1c1c;
+
+  --seq-1: #16273f;
+  --seq-2: #1d3f6e;
+  --seq-3: #2a5fa3;
+  --seq-4: #3987e5;
+  --seq-5: #a9c9ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--running);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
