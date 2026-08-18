@@ -1,44 +1,38 @@
+import os
+
 from agent.base_agent import AgentSystem
 from agent.llm_withtools import chat_with_agent
-from utils.common import extract_jsons
 
 class TaskAgent(AgentSystem):
     def forward(self, inputs):
         """
-        An agent that solves a given task.
+        A research agent that independently conducts a ResearchClawBench-style
+        scientific research task: explores the provided data and related work,
+        writes and runs analysis code, and produces a publication-quality
+        report/report.md with figures.
 
         Args:
-            inputs (dict): A dictionary with input data for the task.
+            inputs (dict): {"instructions": str} -- the fully-rendered task
+                instructions (ResearchClawBench's INSTRUCTIONS.md template,
+                already filled in with the workspace path, task description,
+                and data manifest). The current working directory is expected
+                to already be that workspace (run_task_agent.py sets this up).
 
         Returns:
             tuple:
-                - prediction (str): The prediction made by the agent.
-                - new_msg_history (list): A list of messages representing the message history of the interaction.
+                - prediction (str): "done" if report/report.md exists, else a short failure note.
+                - new_msg_history (list): full message history of the interaction.
         """
-        domain = inputs['domain']
-        instruction = f"""You are an agent.
+        instruction = inputs["instructions"]
+        new_msg_history = chat_with_agent(
+            instruction,
+            model=self.model,
+            msg_history=[],
+            logging=self.log,
+            tools_available='all',
+            multiple_tool_calls=True,
+            max_tool_calls=100,
+        )
 
-Task input:
-```
-{inputs}
-```
-
-Respond in JSON format with the following schema:
-<json>
-{{
-    "response": ...
-}}
-</json>"""
-        new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log)
-
-        # Extract the response
-        prediction = "None"
-        try:
-            extracted_jsons = extract_jsons(new_msg_history[-1]['text'])
-            if extracted_jsons is not None and "response" in extracted_jsons[-1]:
-                prediction = extracted_jsons[-1]['response']
-        except Exception as e:
-            self.log(f"Error extracting prediction: {e}")
-            prediction = "None"
-
+        prediction = "done" if os.path.exists("report/report.md") else "incomplete: report/report.md not found"
         return prediction, new_msg_history
