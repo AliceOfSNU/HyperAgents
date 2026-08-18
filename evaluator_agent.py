@@ -88,8 +88,23 @@ class EvaluatorAgent(AgentSystem):
                 - prediction (dict): {"score": int 0-100, "reasoning": str}
                 - new_msg_history (list): message history of the interaction.
         """
+        report_text = inputs.get("report_text") or ""
+        if not report_text.strip():
+            return {
+                "score": 0,
+                "reasoning": "The report is empty, so the criterion is completely absent.",
+            }, []
+
         keywords_str = ", ".join(inputs.get("keywords", [])) or "None specified"
+        stats = (
+            f"Report length: {len(report_text)} characters, "
+            f"{len(report_text.split())} words, "
+            f"{report_text.count('![')} markdown figure references."
+        )
         instruction = f"""{RUBRIC}
+
+## Strictness Pre-Flight
+Many AI-generated reports are fluent but do not execute the requested analysis or produce the specific quantitative results the criterion asks for. Before assigning a score, verify explicitly whether the report contains criterion-specific evidence derived from the provided data. If it does not, the criterion is absent and the score must be 0-10, regardless of how polished the writing is. Do not reward generic background, restated problem statements, or plausible-sounding but unsupported claims.
 
 ## Research Task Background (INSTRUCTIONS.md given to the AI agent)
 {inputs.get('instructions', '')}
@@ -101,7 +116,10 @@ class EvaluatorAgent(AgentSystem):
 {keywords_str}
 
 ## AI-Generated Research Report
-{inputs['report_text']}
+{report_text}
+
+## Report Metadata (objective; do not use length alone as evidence of quality)
+{stats}
 
 ## Task
 Rate how well this report addresses the criterion compared to the original paper.
@@ -119,22 +137,39 @@ Respond in JSON format with the following schema:
             msg=instruction, model=self.model, msg_history=[],
         )
 
-        prediction = {"score": 0, "reasoning": "Failed to parse evaluator response."}
-        try:
-            extracted = extract_jsons(response)
-            item = extracted[-1] if extracted else None
-            if item is None:
-                # Some backends (observed with DeepSeek) ignore the <json>
-                # wrapper and return a bare JSON object -- extract_jsons only
-                # matches <json>...</json> or ```json fences, so fall back to
-                # parsing the whole response directly.
-                item = json.loads(response.strip())
-            if item:
-                prediction = {
-                    "score": max(0, min(100, int(item.get("score", 0)))),
-                    "reasoning": str(item.get("reasoning", "")),
-                }
-        except Exception as e:
-            self.log(f"Error extracting evaluator score: {e}")
-
+        prediction = self._parse_evaluator_response(response)
         return prediction, new_msg_history
+
+    def _parse_evaluator_response(self, response):
+        """Parse the evaluator JSON as robustly as possible. DeepSeek has been
+        observed to omit <json> wrappers, return bare JSON, or add surrounding
+        prose, so try several extraction strategies before giving up."""
+        extracted = extract_jsons(response)
+        if extracted:
+            return self._normalise_score_item(extracted[-1])
+
+        try:
+            return self._normalise_score_item(json.loads(response.strip()))
+        except Exception:
+            pass
+
+        import re
+        try:
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                return self._normalise_score_item(json.loads(match.group(0)))
+        except Exception:
+            pass
+
+        return {"score": 0, "reasoning": "Failed to parse evaluator response."}
+
+    def _normalise_score_item(self, item):
+        try:
+            raw_score = item.get("score", 0)
+            if isinstance(raw_score, str):
+                raw_score = float(raw_score)
+            score = max(0, min(100, int(raw_score)))
+            reasoning = str(item.get("reasoning", ""))
+            return {"score": score, "reasoning": reasoning}
+        except Exception:
+            return {"score": 0, "reasoning": "Failed to parse evaluator score."}
