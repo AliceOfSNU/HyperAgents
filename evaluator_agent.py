@@ -4,6 +4,31 @@ from agent.base_agent import AgentSystem
 from agent.llm import get_response_from_llm
 from utils.common import extract_jsons
 
+
+def _parse_evaluator_json(response):
+    """Best-effort JSON extraction, robust to missing wrappers/fences."""
+    try:
+        extracted = extract_jsons(response)
+        item = extracted[-1] if extracted else None
+        if item is not None:
+            return item
+    except Exception:
+        pass
+    if not response or not response.strip():
+        return None
+    text = response.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except Exception:
+            pass
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
 # Seeded from ResearchClawBench's own rubric (evaluation/score.py) so the
 # starting evaluator has a reasonable prior; the meta-agent is free to edit
 # this from here.
@@ -119,22 +144,27 @@ Respond in JSON format with the following schema:
             msg=instruction, model=self.model, msg_history=[],
         )
 
+        item = _parse_evaluator_json(response)
+        if item is None:
+            self.log("Invalid evaluator JSON; retrying once with an explicit JSON-only instruction.")
+            response, new_msg_history, _info = get_response_from_llm(
+                msg=(
+                    "Your previous answer was not valid JSON. Return ONLY a JSON object "
+                    'with the schema {"reasoning": "<2-3 sentences>", "score": <integer 0-100>}. '
+                    "Do not include markdown fences or any other text."
+                ),
+                model=self.model,
+                msg_history=new_msg_history,
+            )
+            item = _parse_evaluator_json(response)
+
         prediction = {"score": 0, "reasoning": "Failed to parse evaluator response."}
-        try:
-            extracted = extract_jsons(response)
-            item = extracted[-1] if extracted else None
-            if item is None:
-                # Some backends (observed with DeepSeek) ignore the <json>
-                # wrapper and return a bare JSON object -- extract_jsons only
-                # matches <json>...</json> or ```json fences, so fall back to
-                # parsing the whole response directly.
-                item = json.loads(response.strip())
-            if item:
-                prediction = {
-                    "score": max(0, min(100, int(item.get("score", 0)))),
-                    "reasoning": str(item.get("reasoning", "")),
-                }
-        except Exception as e:
-            self.log(f"Error extracting evaluator score: {e}")
+        if item:
+            prediction = {
+                "score": max(0, min(100, int(item.get("score", 0)))),
+                "reasoning": str(item.get("reasoning", "")),
+            }
+        else:
+            self.log(f"Error extracting evaluator score from response: {response[:200]!r}")
 
         return prediction, new_msg_history

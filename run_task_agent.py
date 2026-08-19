@@ -51,7 +51,7 @@ def main():
     os.chdir(workspace)
     try:
         agentic_system = TaskAgent(model=args.model, chat_history_file=chat_history_file)
-        prediction, _ = agentic_system.forward({"instructions": instructions})
+        prediction, _ = agentic_system.forward({"instructions": instructions, "task_id": args.task_id, "workspace": workspace})
     finally:
         os.chdir(prev_cwd)
 
