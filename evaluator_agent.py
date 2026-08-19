@@ -9,7 +9,11 @@ from utils.common import extract_jsons
 # as possible to the fixed ground-truth anchor. A local fallback is kept only
 # so this module can still be imported in isolation during development.
 try:
-    from domains.research.claude_scorer import JUDGE_SYSTEM_PROMPT, RUBRIC
+    from domains.research.claude_scorer import (
+        JUDGE_SYSTEM_PROMPT,
+        RUBRIC,
+        _build_text_prompt as _anchor_build_text_prompt,
+    )
 except Exception:  # pragma: no cover - fallback only
     JUDGE_SYSTEM_PROMPT = (
         "You are a strict scientific peer reviewer evaluating AI-generated research. "
@@ -54,8 +58,21 @@ class EvaluatorAgent(AgentSystem):
                 - prediction (dict): {"score": int 0-100, "reasoning": str}
                 - new_msg_history (list): message history of the interaction.
         """
-        keywords_str = ", ".join(inputs.get("keywords", [])) or "None specified"
-        instruction = f"""{RUBRIC}
+        try:
+            # Prefer the anchor scorer's own prompt builder: this guarantees the
+            # evaluator sees byte-for-byte the same prompt as the fixed
+            # ground-truth judge, so any remaining score gap is model ability,
+            # not a wrapper/prompt divergence.
+            instruction = _anchor_build_text_prompt(
+                inputs["report_text"],
+                {"content": inputs["criterion"], "keywords": inputs.get("keywords", []), "type": "text"},
+                inputs.get("instructions", ""),
+            )
+        except Exception:
+            # Fallback only for isolated development imports; the sandboxed
+            # evaluator container always ships domains/research/claude_scorer.py.
+            keywords_str = ", ".join(inputs.get("keywords", [])) or "None specified"
+            instruction = f"""{RUBRIC}
 
 ## Research Task Background (INSTRUCTIONS.md given to the AI agent)
 {inputs.get('instructions', '')}
@@ -94,8 +111,13 @@ Return your answer as a JSON object: {{"reasoning": "<2-3 sentences>", "score": 
                 if start >= 0 and end > start:
                     item = json.loads(text[start:end + 1])
             if item:
+                raw_score = item.get("score", 0)
+                try:
+                    score = max(0, min(100, int(round(float(raw_score)))))
+                except Exception:
+                    score = 0
                 prediction = {
-                    "score": max(0, min(100, int(item.get("score", 0)))),
+                    "score": score,
                     "reasoning": str(item.get("reasoning", "")),
                 }
         except Exception as e:
