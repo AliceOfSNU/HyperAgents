@@ -272,6 +272,15 @@ def setup_initial_gen(
         "misc",
         "baselines",
         "domains",
+        # setup_initial_gen copies the live filesystem, not a git-tracked
+        # snapshot -- .gitignore never applies here, so anything holding
+        # real credentials has to be excluded explicitly or it lands
+        # directly inside every generation's container, readable (and,
+        # since agents have fetch_url, exfiltratable) by the meta-agent.
+        # Confirmed live: a real run's meta-agent read /hyperagents/.env
+        # during routine exploration (never misused it, but nothing stopped
+        # it from being able to).
+        ".dashboard_secrets",
     }
     excluded_files = {
         "Dockerfile",
@@ -280,10 +289,11 @@ def setup_initial_gen(
         "LICENSE.md",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
+        ".env",
     }
-    if "polyglot" not in domains:
+    if "polyglot" not in domains and "research" not in domains:
         excluded_files.add("run_task_agent.py")
-    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*"]
+    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*", "client_secret*.json*"]
     if "ensemble" not in optimize_option or not any(can_domain_ensembled(d) for d in domains) and not copy_root_dir:
         excluded_patterns.append("*ensemble*")
     if not edit_select_parent and not copy_root_dir:
@@ -297,6 +307,32 @@ def setup_initial_gen(
         "polyglot/predictions",
         "polyglot/SWE-bench",
         "polyglot/logs",
+        # root_dir gets bind-mounted LIVE into the meta-agent's own container
+        # (see utils/pr_review.py's docstring / generate_loop.py's
+        # build_container), unlike task-agent/evaluator-agent sandboxed
+        # containers which only ever receive an explicit allowlist
+        # (domains/research/harness.py's BASELINE_FILES, which already
+        # excludes this). Without this, the meta-agent can read the
+        # evaluator-promotion ground truth directly while writing
+        # evaluator_agent.py -- confirmed live it already does (it ran a
+        # script counting anchor_cache.json's reports and per-task report
+        # lengths) -- opening the door to hardcoding known answers into the
+        # evaluator's source rather than learning to judge well. Host-side
+        # scoring code (compute_node_utility, _score_evaluator_against_anchor)
+        # is unaffected: it reads domains/research/config.py's
+        # ANCHOR_CACHE_PATH relative to the live project directory, never
+        # from this per-run copy.
+        "research/subsets/anchor_cache.json",
+        # Same reasoning, different exploit: PR #13 added a task_agent.py
+        # dispatch table hardcoded to the exact 5 task IDs in
+        # scoring_subset.json (the fixed set every generation is scored
+        # against), returning largely static/fabricated report content for
+        # them instead of running the real agentic research loop --
+        # confirmed live via the file itself: closed rather than merged.
+        # Hiding the scoring subset's task IDs removes the ability to
+        # special-case them by name in the first place. compute_node_utility
+        # is unaffected for the same reason as anchor_cache.json above.
+        "research/subsets/scoring_subset.json",
     }
     excluded_dirs_domains.update({  # exclude domains that are not in the current run
         f"{folder_name}"
