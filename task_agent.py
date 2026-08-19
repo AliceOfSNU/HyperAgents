@@ -38,17 +38,45 @@ def _pdf_text(pdf_path, max_pages=6, max_chars=8000):
 
 
 def _read_csv_loose(path):
-    """Read a CSV-like file with progressively more permissive parsing."""
+    """Read a CSV-like file with progressively more permissive parsing.
+
+    Attempts are ordered by the file extension's most likely delimiter. In
+    particular, many real lab files use whitespace-separated columns with
+    leading comment lines; the generic pandas default would read those as a
+    single column and throw away the table structure we are trying to show
+    the agent.
+    """
     import pandas as pd
 
-    try:
-        return pd.read_csv(path, nrows=2000)
-    except Exception:
-        pass
-    try:
-        return pd.read_csv(path, nrows=2000, sep=None, engine="python")
-    except Exception:
-        pass
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        attempts = [
+            {"sep": ","},
+            {"sep": None, "engine": "python"},
+        ]
+    elif suffix == ".tsv":
+        attempts = [
+            {"sep": "\t"},
+            {"sep": None, "engine": "python"},
+        ]
+    elif suffix in {".dat", ".data"}:
+        attempts = [
+            {"sep": None, "engine": "python", "comment": "#"},
+            {"sep": r"\s+", "engine": "python", "comment": "#"},
+        ]
+    else:
+        attempts = [
+            {"sep": None, "engine": "python"},
+            {"sep": r"\s+", "engine": "python", "comment": "#"},
+        ]
+    # Always fall back to pandas' default parser as a last resort.
+    attempts.append({})
+
+    for kwargs in attempts:
+        try:
+            return pd.read_csv(path, nrows=2000, **kwargs)
+        except Exception:
+            pass
     return None
 
 
@@ -126,6 +154,49 @@ def _load_dataframe(path):
 def _safe_stem(path, idx):
     stem = re.sub(r"[^A-Za-z0-9_]+", "_", path.stem)[:40]
     return f"{idx:02d}_{stem}"
+
+
+RESEARCH_EXECUTION_ORDERS = """
+## Standing orders for this research run
+
+1. **Use every provided data file directly.** If a file is not a plain table, write and run a short Python script to inspect it (e.g. images, .pt/.pkl tensors, archives). Do not substitute synthetic or toy datasets for the provided ones.
+2. **Mine the related work for explicit quantitative claims.** The related_work PDFs include the target paper. Extract its key numbers, metrics, benchmarks, equations, and expected outputs, and list them in your report. Your results section must include a side-by-side comparison against those published values wherever possible.
+3. **Deliver file-specific, concrete results.** For every data file, state what was extracted or observed in the report. For image/OCR files, include the recognized text or LaTeX. For tabular data, include summary statistics and derived quantities with units and uncertainties.
+4. **Do not settle for a negative result without exhaustive diagnostics.** For learning/optimization tasks, train on the provided labels and evaluate on the specified candidate/test split; report positive findings and baselines. If performance is poor, show ablations and explain why with evidence.
+5. **Write report/report.md only when complete.** It must contain methodology, results with quantitative tables and figures, a comparison with published work, discussion, and conclusion.
+"""
+
+
+def _image_summary(path):
+    """Return a compact image description without loading the whole image."""
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        with Image.open(path) as im:
+            return f"- image: {im.format} {im.size[0]}x{im.size[1]} mode={im.mode}"
+    except Exception:
+        return None
+
+
+def _preview_unsupported(path):
+    """Best-effort preview for files the dataframe loader cannot parse."""
+    suffix = path.suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}:
+        image_summary = _image_summary(path)
+        if image_summary:
+            return image_summary
+    if suffix in {".pt", ".pth", ".pkl", ".pickle", ".joblib", ".sav", ".h5", ".hdf5", ".mat", ".npz", ".parquet"}:
+        try:
+            size = path.stat().st_size
+        except Exception:
+            size = -1
+        return f"- binary data file ({suffix}): {size} bytes; inspect it with a short Python script before using."
+    try:
+        return f"- text preview:\n```\n{path.read_text(encoding="utf-8", errors="replace")[:800]}\n```"
+    except Exception:
+        return "- binary/unsupported file (could not read a text preview)"
 
 
 def _make_figures(df, stem, max_figs=4):
@@ -254,13 +325,18 @@ def _extract_task_description(instruction):
     return instruction.strip().splitlines()[0] if instruction.strip() else "Research task"
 
 
-def _gather_workspace(instruction, max_data_files=16):
+def _gather_workspace(instruction, max_data_files=64):
     """Cheaply inspect the workspace and return (recon_text, figures).
 
     The result is used twice: first as extra context for the tool-using LLM
     pass, then as the raw material for the fallback report writer. It must be
     fast and must never crash -- any single file failing to parse should be
-    skipped, not abort the whole task."""
+    skipped, not abort the whole task.
+
+    File ordering is deliberate: table-like data formats come first, binary
+    blobs and metadata documents later. This keeps the first file summaries
+    useful for a task agent that may only read the truncated recon text.
+    """
     parts = ["## Workspace reconnaissance (pre-gathered)\n"]
 
     # Data files.
@@ -268,17 +344,40 @@ def _gather_workspace(instruction, max_data_files=16):
     figures = []
     data_summaries = []
     if data_dir.exists():
-        files = sorted([p for p in data_dir.rglob("*") if p.is_file()])[:max_data_files]
+        all_files = sorted([p for p in data_dir.rglob("*") if p.is_file()])
+        priority = {
+            ".csv": 0, ".tsv": 1, ".dat": 2, ".txt": 3, ".xlsx": 4, ".xls": 5,
+            ".json": 6, ".npy": 7, ".npz": 8, ".parquet": 9, ".pkl": 10,
+            ".pt": 11, ".pth": 12, ".h5": 13, ".hdf5": 14, ".mat": 15,
+            ".png": 20, ".jpg": 21, ".jpeg": 22, ".tif": 23, ".tiff": 24,
+        }
+        files = sorted(
+            all_files,
+            key=lambda p: (priority.get(p.suffix.lower(), 90), str(p).lower()),
+        )[:max_data_files]
         parts.append("### Data files")
         if not files:
             parts.append("(empty)")
+        else:
+            from collections import Counter
+            ext_counts = Counter(p.suffix.lower() or "(no extension)" for p in all_files)
+            ext_summary = ", ".join(f"{ext}: {count}" for ext, count in sorted(ext_counts.items()))
+            parts.append(
+                f"Total files found: {len(all_files)}. Showing up to {len(files)} "
+                f"prioritized data files (tables first, images/archives later).\n"
+                f"Extension counts: {ext_summary}"
+            )
         fig_budget = 6
         for idx, path in enumerate(files):
             rel = str(path)
             stem = _safe_stem(path, idx)
             parts.append(f"\n#### {rel}")
-            if path.stat().st_size > 50_000_000:
-                parts.append(f"- skipped: file too large ({path.stat().st_size} bytes)")
+            try:
+                size = path.stat().st_size
+            except Exception:
+                size = -1
+            if size > 50_000_000:
+                parts.append(f"- skipped: file too large ({size} bytes)")
                 continue
             df = _load_dataframe(path)
             if df is not None and not df.empty:
@@ -294,13 +393,9 @@ def _gather_workspace(instruction, max_data_files=16):
                     except Exception as exc:
                         parts.append(f"- figure generation failed: {exc}")
             else:
-                # Show a small plain-text preview for unsupported formats.
-                try:
-                    head = path.read_text(encoding="utf-8", errors="replace")[:800]
-                except Exception:
-                    head = "(could not read file preview)"
-                data_summaries.append({"file": rel, "summary": f"- unsupported/binary file; preview:\n```\n{head}\n```"})
-                parts.append(f"- unsupported/binary file; preview:\n```\n{head}\n```")
+                summary = _preview_unsupported(path)
+                data_summaries.append({"file": rel, "summary": summary})
+                parts.append(summary)
     else:
         parts.append("### Data files\n(no data directory)")
 
@@ -329,9 +424,10 @@ def _gather_workspace(instruction, max_data_files=16):
 def _build_recon_prompt(instruction, recon):
     return (
         f"{instruction}\n\n"
+        f"{RESEARCH_EXECUTION_ORDERS}\n\n"
         "The workspace has already been inspected on your behalf; use this to save "
         "time, but verify anything you rely on with your own tools if needed.\n\n"
-        f"{_truncate(recon, 18000)}"
+        f"{_truncate(recon, 24000)}"
     )
 
 
@@ -345,7 +441,8 @@ def _try_llm_report(instruction, recon, model):
             "report now and return it as your entire response. Include methodology, "
             "results with quantitative details, discussion, and figure references.\n\n"
             f"# Task instructions\n{instruction}\n\n"
-            f"# Workspace reconnaissance\n{_truncate(recon, 18000)}\n\n"
+            f"{RESEARCH_EXECUTION_ORDERS}\n\n"
+            f"# Workspace reconnaissance\n{_truncate(recon, 24000)}\n\n"
             "Return only the Markdown report."
         )
         response, _, _ = get_response_from_llm(
