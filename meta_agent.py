@@ -25,9 +25,11 @@ class MetaAgent(AgentSystem):
             "whether to act on it, is entirely your judgment call.\n\n"
             f"`{eval_path}` holds the full history of every earlier generation in this "
             "lineage: each gen_N/ has that generation's own self-modification attempt "
-            "(agent_output/model_patch.diff, and agent_output/meta_agent_chat_history.md "
-            "-- the raw conversation an earlier version of you had) plus its evaluation "
-            "results. Also note that the agent harness code itself (e.g. "
+            "(agent_output/model_patch.diff, agent_output/meta_agent_chat_history.md -- "
+            "an earlier version of you, as a sequence of Plan/Act/Observe rounds -- and "
+            "agent_output/meta_agent_chat_history.json, the same rounds as structured "
+            "data) plus its evaluation results. Also note that the agent harness code "
+            "itself (e.g. "
             "agent/llm_withtools.py's chat_with_agent, which every agent in this repo, "
             "including you right now, runs through) is just as much yours to inspect "
             "and improve as task_agent.py is."
@@ -45,7 +47,11 @@ class MetaAgent(AgentSystem):
         # task_agent.py's own explicit max_tool_calls) rather than raising
         # chat_with_agent's shared default, which would also silently affect
         # the unrelated baseline callers that rely on it.
-        new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log, tools_available='all', max_tool_calls=80)
+        new_msg_history, trajectory = chat_with_agent(
+            instruction, model=self.model, msg_history=[], logging=self.log,
+            tools_available='all', max_tool_calls=80, plan_act_observe=True,
+        )
+        self.save_trajectory(trajectory)
 
     @staticmethod
     def _parent_empty_diff_note(eval_path, parent_genid):

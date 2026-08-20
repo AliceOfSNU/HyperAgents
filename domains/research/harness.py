@@ -242,7 +242,12 @@ def run_task_agent_sandboxed(docker_client, root_dir, patch_files, task_id, mode
             "python", f"/{REPO_NAME}/run_task_agent.py",
             "--workspace", CONTAINER_WORKSPACE,
             "--task_id", task_id,
-            "--chat_history_file", f"/{REPO_NAME}/{task_id}_chat.md",
+            # Inside CONTAINER_WORKSPACE (alongside _meta.json, report/, ...)
+            # rather than the repo root -- only the workspace gets copied
+            # back below, so a chat_history_file outside it (as this used to
+            # be) was silently lost, along with its trajectory.json
+            # companion (see AgentSystem.save_trajectory).
+            "--chat_history_file", f"{CONTAINER_WORKSPACE}/chat_history.md",
             "--model", model,
         ]
         exec_result = container.exec_run(cmd, environment=_agent_env_vars(), workdir=f"/{REPO_NAME}")

@@ -24,7 +24,7 @@ class TaskAgent(AgentSystem):
                 - new_msg_history (list): full message history of the interaction.
         """
         instruction = inputs["instructions"]
-        new_msg_history = chat_with_agent(
+        new_msg_history, trajectory = chat_with_agent(
             instruction,
             model=self.model,
             msg_history=[],
@@ -32,7 +32,9 @@ class TaskAgent(AgentSystem):
             tools_available='all',
             multiple_tool_calls=True,
             max_tool_calls=100,
+            plan_act_observe=True,
         )
+        self.save_trajectory(trajectory)
 
         prediction = "done" if os.path.exists("report/report.md") else "incomplete: report/report.md not found"
         return prediction, new_msg_history
