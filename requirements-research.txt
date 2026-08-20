@@ -11,6 +11,7 @@ requests==2.32.4
 dotenv==0.9.9
 GitPython==3.1.44
 pandas==2.3.2
+openpyxl
 numpy
 matplotlib==3.10.3
 scipy
