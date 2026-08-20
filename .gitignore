@@ -1,2 +1,33 @@
 outputs/
 outputs_os/
+.env
+__pycache__/
+
+# research domain: run_task_agent.py stages/writes real task data -- data
+# files, related-work PDFs, INSTRUCTIONS.md -- directly at the repo root
+# whenever something invokes task_agent.py without isolating its cwd first.
+# Without this, that lands in "git add --all" as a self-modification diff
+# full of binary garbage, which then fails to `git apply` when the PR-review
+# gate tries to publish it (confirmed against a real run: a 397KB "diff"
+# that was 100% workspace pollution and zero real code changes, killing PR
+# publication -- caused there by the meta-agent's now-removed
+# consult_task_agent tool).
+/workspace/
+
+# arc_agi3: downloaded game files + optional session recordings from the arc-agi SDK
+environment_files/
+recordings/
+.dashboard_secrets/
+dashboard/export/
+
+# polyglot domain: fetched benchmark checkouts/metadata, not authored source
+domains/polyglot/SWE-bench/
+domains/polyglot/polyglot-benchmark/
+domains/polyglot/logs/
+domains/polyglot/polyglot_benchmark_metadata.json
+
+# runtime log, not source
+dashboard_loop.log
+
+# WSL alternate-data-stream marker left behind by browser downloads
+*:Zone.Identifier

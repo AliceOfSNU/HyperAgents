@@ -174,6 +174,7 @@ if __name__ == "__main__":
             "genesis_go2hop",
             "imo_grading",
             "imo_proof",
+            "arc_agi3",
         ],
         required=True,
         help="Domain to evaluate",
@@ -199,3 +200,8 @@ if __name__ == "__main__":
     elif "genesis" in domain:
         from domains.genesis.eval import report_genesis
         report_genesis(output_dir=args.dname)
+
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        from domains.arc_agi3.eval import report_arc_agi3
+        report_arc_agi3(output_dir=args.dname)

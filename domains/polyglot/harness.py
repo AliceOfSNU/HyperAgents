@@ -20,6 +20,7 @@ from domains.polyglot.git_utils import filter_patch_by_files, remove_patch_by_fi
 from domains.polyglot.utils import (
     copy_to_container,
     copy_from_container,
+    create_archive,
     log_container_output,
     remove_existing_container,
     safe_log,
@@ -69,7 +70,11 @@ def process_entry(entry, out_dname, model_name_or_path, model_patch_paths, root_
         root_dir = root_dir if root_dir is not None else "./"
         copy_to_container(container, os.path.join(root_dir, 'task_agent.py'), f'/{REPO_NAME}/task_agent.py')
         copy_to_container(container, os.path.join(root_dir, 'run_task_agent.py'), f'/{REPO_NAME}/run_task_agent.py')
-        copy_to_container(container, os.path.join(root_dir, 'requirements.txt'), f'/{REPO_NAME}/requirements.txt')
+        # NOTE: intentionally a slim, task-solving-only requirements file, not the
+        # full requirements.txt (torch/Genesis/balrog/etc are not needed here and
+        # installing all of that in every parallel per-task container is wasteful
+        # and was observed to destabilize the host). See requirements-polyglot.txt.
+        copy_to_container(container, os.path.join(root_dir, 'requirements-polyglot.txt'), f'/{REPO_NAME}/requirements-polyglot.txt')
         copy_to_container(container, os.path.join(root_dir, 'agent/'), f'/{REPO_NAME}/agent/')
         copy_to_container(container, os.path.join(root_dir, 'utils/'), f'/{REPO_NAME}/utils/')
         copy_to_container(container, os.path.join(root_dir, 'meta_agent.py'), f'/{REPO_NAME}/meta_agent.py')
@@ -97,13 +102,14 @@ def process_entry(entry, out_dname, model_name_or_path, model_patch_paths, root_
 
         # Install this repo requirements
         safe_log("Installing more requirements")
-        exec_result = container.exec_run(f"python -m pip install -r /{REPO_NAME}/requirements.txt", workdir='/')
+        exec_result = container.exec_run(f"python -m pip install -r /{REPO_NAME}/requirements-polyglot.txt", workdir='/')
         log_container_output(exec_result)
 
         # Run the agent
         env_vars = {
             "ANTHROPIC_API_KEY": os.getenv('ANTHROPIC_API_KEY'),
             "OPENAI_API_KEY": os.getenv('OPENAI_API_KEY'),
+            "DEEPSEEK_API_KEY": os.getenv('DEEPSEEK_API_KEY'),
             "METAGEN_ACCESS_TOKEN": os.getenv('METAGEN_ACCESS_TOKEN'),
         }
         safe_log("Running the agent")
@@ -117,7 +123,10 @@ def process_entry(entry, out_dname, model_name_or_path, model_patch_paths, root_
             "--outdir", f"/{REPO_NAME}/",
             "--test_description", test_description,
             "--language", entry['language'],
-            "--model", "o3-mini",
+            # NOTE: paper default is o3-mini (needs OPENAI_API_KEY); switched to
+            # DeepSeek v4 flash (out of ANTHROPIC/DEEPSEEK credits on Anthropic).
+            # This is a deviation from the paper's exact DGM comparison.
+            "--model", "deepseek/deepseek-v4-flash",
         ]
         exec_result = container.exec_run(cmd, environment=env_vars, workdir='/testbed/')
         log_container_output(exec_result)
@@ -158,14 +167,30 @@ def process_entry(entry, out_dname, model_name_or_path, model_patch_paths, root_
             return {"success": True, "instance_id": instance_id, "eval_result": eval_result}
     
 
-        exec_result = container.exec_run("git -C /testbed stash push " + " ".join(entry['files']['solution']), workdir='/')
-        log_container_output(exec_result)
+        # Snapshot the agent's edits to the declared solution file(s) by reading
+        # their content directly, rather than `git stash push -- <paths>`: that
+        # pathspec-scoped stash is fragile -- it silently creates no stash entry
+        # if the agent's diff didn't touch these exact paths (e.g. it only touched
+        # build artifacts), leaving nothing for the unconditional `stash pop` below
+        # to reapply, and it can also fail outright on some working-tree states
+        # (observed: "Entry '<file>' not uptodate. Cannot merge."). Either failure
+        # previously crashed the whole task instance before the eval even ran.
+        solution_file_contents = {}
+        for solution_file in entry['files']['solution']:
+            exec_result = container.exec_run(f"cat /testbed/{solution_file}")
+            if exec_result.exit_code == 0:
+                solution_file_contents[solution_file] = exec_result.output
+
         exec_result = container.exec_run(f"git -C /testbed reset --hard {entry['test_commit']}", workdir='/')
         log_container_output(exec_result)
         exec_result = container.exec_run(f"git -C /testbed clean -fd", workdir='/')
         log_container_output(exec_result)
-        exec_result = container.exec_run("git -C /testbed stash pop", workdir='/')
-        log_container_output(exec_result)
+
+        for solution_file, data in solution_file_contents.items():
+            dest_path = f"/testbed/{solution_file}"
+            dest_dir = os.path.dirname(dest_path)
+            container.exec_run(f"mkdir -p {dest_dir}")
+            container.put_archive(dest_dir, create_archive(os.path.basename(dest_path), data))
         
         safe_log("Running the eval")
         language = entry['language']
@@ -237,7 +262,7 @@ def harness(
         dataset_path="./domains/polyglot/polyglot_benchmark_metadata.json",
         test_task_list=None,
         num_samples=-1,
-        max_workers=4,
+        max_workers=3,
         model_name_or_path=None,
         model_patch_paths=None,
         num_evals=1,
@@ -387,7 +412,7 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_samples", type=int, default=-1, help="Number of samples to process")
-    parser.add_argument("--max_workers", type=int, default=5, help="Maximum number of concurrent threads")
+    parser.add_argument("--max_workers", type=int, default=3, help="Maximum number of concurrent threads")
     parser.add_argument("--model_name_or_path", type=str, default=None, help="Model name or path")
     parser.add_argument("--model_patch_paths", type=str, default=None, help="Paths to the model patches")
     parser.add_argument("--num_evals", type=int, default=1, help="Repeated number of swe evaluations")

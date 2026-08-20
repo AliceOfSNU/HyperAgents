@@ -1,0 +1,39 @@
+# ARC-AGI-3 (https://arcprize.org/arc-agi/3) is an interactive reasoning benchmark:
+# the agent is dropped into an unfamiliar game with no instructions and must explore,
+# form a plan, and act, one discrete action at a time. There is no ground-truth label
+# to match against; performance is a live score computed by the ARC engine itself
+# (level completion, weighted by level order, discounted by action-efficiency vs a
+# human baseline). See domains/arc_agi3/utils.py for how that score is read back.
+
+eval:
+  output_dir: "results"
+  run_id: null                 # Unique identifier for the evaluation run; null uses a random UUID
+  resume_from: null            # Path to an incomplete results dir to resume from
+  num_workers: 1                # Keep low: the ARC-AGI-3 hosted API rate-limits concurrent sessions per key
+  num_episodes:
+    arc_agi3: 1                 # Number of attempts (episodes) per game
+  max_steps_per_episode: 40     # Action budget per attempt -- controls FM-call cost per episode
+  max_resets_per_episode: 2     # Safety cap on GAME_OVER -> RESET loops within one episode's action budget
+  save_trajectories: true       # Whether to save per-step JSON trajectories
+  feedback_on_invalid_action: true   # Tell the agent when its last action couldn't be parsed/was illegal
+
+envs:
+  names: arc_agi3
+  arc_api_key: null             # null reads from the ARC_API_KEY environment variable
+  arc_base_url: "https://three.arcprize.org"
+  operation_mode: "normal"      # normal (local+remote) | offline (local only, no rate limits) | online (remote only)
+  env_kwargs:
+    seed: null                  # Random seed; null means a random seed is used per episode
+
+# Games to play. Start small and cheap for staged eval; expand once the task agent
+# is doing better than chance. Full game catalog: https://arcprize.org/tasks
+# (or programmatically via arc_agi.Arcade().get_environments()).
+tasks:
+  arc_agi3_tasks:
+    - ft09   # small "elementary logic" game -- good default for staged/cheap eval
+    - ls20   # "agent reasoning" game
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

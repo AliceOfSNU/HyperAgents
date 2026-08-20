@@ -272,6 +272,15 @@ def setup_initial_gen(
         "misc",
         "baselines",
         "domains",
+        # setup_initial_gen copies the live filesystem, not a git-tracked
+        # snapshot -- .gitignore never applies here, so anything holding
+        # real credentials has to be excluded explicitly or it lands
+        # directly inside every generation's container, readable (and,
+        # since agents have fetch_url, exfiltratable) by the meta-agent.
+        # Confirmed live: a real run's meta-agent read /hyperagents/.env
+        # during routine exploration (never misused it, but nothing stopped
+        # it from being able to).
+        ".dashboard_secrets",
     }
     excluded_files = {
         "Dockerfile",
@@ -280,10 +289,11 @@ def setup_initial_gen(
         "LICENSE.md",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
+        ".env",
     }
-    if "polyglot" not in domains:
+    if "polyglot" not in domains and "research" not in domains:
         excluded_files.add("run_task_agent.py")
-    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*"]
+    excluded_patterns = ["venv*", "__pycache__*", "*.png", "outputs_os*", "client_secret*.json*"]
     if "ensemble" not in optimize_option or not any(can_domain_ensembled(d) for d in domains) and not copy_root_dir:
         excluded_patterns.append("*ensemble*")
     if not edit_select_parent and not copy_root_dir:
@@ -297,6 +307,36 @@ def setup_initial_gen(
         "polyglot/predictions",
         "polyglot/SWE-bench",
         "polyglot/logs",
+        # root_dir gets bind-mounted LIVE into the meta-agent's own container
+        # (see utils/pr_review.py's docstring / generate_loop.py's
+        # build_container), unlike task-agent sandboxed containers which
+        # only ever receive an explicit allowlist (domains/research/
+        # harness.py's BASELINE_FILES, which already excludes this). PR #13
+        # added a task_agent.py dispatch table hardcoded to the exact 5 task
+        # IDs in scoring_subset.json (the fixed set every generation is
+        # scored against), returning largely static/fabricated report
+        # content for them instead of running the real agentic research loop
+        # -- confirmed live via the file itself: closed rather than merged.
+        # Hiding the scoring subset's task IDs removes the ability to
+        # special-case them by name in the first place. Host-side scoring
+        # code (compute_node_utility) is unaffected: it reads domains/
+        # research/config.py's SCORING_SUBSET_PATH relative to the live
+        # project directory, never from this per-run copy.
+        "research/subsets/scoring_subset.json",
+        # claude_scorer.py holds the actual ground-truth rubric, system
+        # prompt, and Claude-calling implementation (as opposed to
+        # scoring_utils.py's generic weight-aggregation logic, which is
+        # deliberately kept separate and left visible -- see both modules'
+        # docstrings). Also confirmed live: PR #16 fetched a task's
+        # target_study/checklist.json straight from ResearchClawBench's
+        # public GitHub repo via the fetch_url tool and hardcoded the exact
+        # published values into task_agent.py's own report-generation
+        # prompts -- hiding claude_scorer.py doesn't stop that particular
+        # exploit (the checklist is public, not local), but it does remove
+        # the easier, purely-local route to the same rubric. Host-side
+        # harness.py's own import of it is unaffected for the same reason as
+        # the entry above.
+        "research/claude_scorer.py",
     }
     excluded_dirs_domains.update({  # exclude domains that are not in the current run
         f"{folder_name}"

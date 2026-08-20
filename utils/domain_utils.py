@@ -14,6 +14,12 @@ def get_domain_score_key(domain):
     # IMO proof domain
     elif domain == "imo_proof":
         return "points_percentage"
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return "average_score"
+    # Research domain (ResearchClawBench)
+    elif domain == "research":
+        return "node_utility"
 
 
 def get_domain_splits(domain, eval_test=False):
@@ -34,6 +40,12 @@ def get_domain_splits(domain, eval_test=False):
         return ["train"]
     # IMO Proof domain
     elif domain == "imo_proof":
+        return ["train"]
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return ["train"]
+    # Research domain (ResearchClawBench) -- own file-based subset split, no val/test
+    elif domain == "research":
         return ["train"]
 
 
@@ -56,6 +68,12 @@ def can_domain_ensembled(domain):
     # IMO proof domain
     elif domain == "imo_proof":
         return False
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return False
+    # Research domain (ResearchClawBench) -- combined real+evaluator score, not ensembleable
+    elif domain == "research":
+        return False
 
 
 def get_domain_eval_subset(domain):
@@ -76,6 +94,12 @@ def get_domain_eval_subset(domain):
         return "_filtered_100_train"
     # IMO proof domain
     elif domain == "imo_proof":
+        return ""
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return ""
+    # Research domain -- own file-based subset (domains/research/subsets/), unused here
+    elif domain == "research":
         return ""
 
 
@@ -98,6 +122,12 @@ def get_domain_test_subset(domain):
     # IMO proof domain
     elif domain == "imo_proof":
         return ""
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return ""
+    # Research domain -- own file-based subset, unused here
+    elif domain == "research":
+        return ""
 
 
 def get_domain_stagedeval_samples(domain):
@@ -118,6 +148,13 @@ def get_domain_stagedeval_samples(domain):
         return 10
     # IMO proof domain
     elif domain == "imo_proof":
+        return 10
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return 1
+    # Research domain -- size of the fixed scoring subset (domains/research/harness.py
+    # handles this internally; unused by the generic staged-eval path)
+    elif domain == "research":
         return 10
 
 
@@ -143,6 +180,14 @@ def get_domain_stagedeval_frac(domain):
     # IMO proof domain
     elif domain == "imo_proof":
         return 10/60
+    # ARC-AGI-3 interactive reasoning domain
+    # NOTE: assumes a "full" eval of 3 episodes/game; raise --eval_samples to match
+    # if you configure more episodes per game in domains/arc_agi3/config/config.yaml
+    elif domain == "arc_agi3":
+        return 1/3
+    # Research domain -- unused, handled internally by domains/research/harness.py
+    elif domain == "research":
+        return 10/40
 
 
 def has_domain_val_subset(domain):
@@ -163,4 +208,10 @@ def has_domain_val_subset(domain):
         return True
     # IMO proof domain
     elif domain == "imo_proof":
+        return False
+    # ARC-AGI-3 interactive reasoning domain
+    elif domain == "arc_agi3":
+        return False
+    # Research domain
+    elif domain == "research":
         return False

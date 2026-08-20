@@ -9,6 +9,8 @@ GitPython==3.1.44
 litellm==1.74.9
 pandas==2.3.2
 sympy==1.14.0
+pypdf==6.16.1  # for the read_pdf agent tool (external steering material)
+anthropic==0.122.0  # real_score judge for the research domain, called directly (RCB's own scorer can't reach Claude)
 
 # for balrog
 hydra-core==1.3.2
@@ -27,3 +29,12 @@ git+https://github.com/nacloos/baba-is-ai
 rsl-rl-lib==2.2.4
 tensorboard==2.20.0
 git+https://github.com/Genesis-Embodied-AI/Genesis.git
+
+# for arc_agi3
+# NOTE: arc-agi==0.9.9 requires pillow>=12.1.1, which is incompatible with
+# moviepy (a transitive dep of the Genesis git install above), which caps
+# pillow<12.0 across every available version -- there is no pillow version
+# that satisfies both, so the two domains currently cannot share one image.
+# Install separately (pip install arc-agi) in an environment that isn't
+# also running genesis, or revisit once one side relaxes its pillow pin.
+# arc-agi==0.9.9

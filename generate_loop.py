@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import docker
+from dotenv import load_dotenv
 from analysis.plot_progress import plot_progress_single, plot_progress_together
 from analysis.visualize_archive import (
     visualize_archive_single,
@@ -21,6 +22,7 @@ from utils.docker_utils import (
     copy_from_container,
     copy_to_container,
     log_container_output,
+    reclaim_host_ownership,
     safe_log,
     setup_logger,
 )
@@ -33,6 +35,7 @@ from utils.domain_utils import (
 from utils.gl_utils import (
     apply_diffs_container,
     get_patch_files,
+    get_node_metadata_key,
     get_score,
     load_archive_data,
     run_commands_to_check_compilation,
@@ -44,6 +47,36 @@ from utils.gl_utils import (
     is_starting_node,
     process_meta_patch_files,
 )
+from utils.pr_review import push_root_branch, run_pr_review_gate
+
+# Nothing on the host otherwise triggers python-dotenv (it's normally loaded
+# as litellm's own import side effect, which only happens inside containers)
+# -- needed here now that the meta-agent's container can no longer fall back
+# to reading a copied .env file for its own credentials (see
+# _meta_agent_env_vars below).
+load_dotenv()
+
+
+def _meta_agent_env_vars():
+    """API keys the meta-agent's own litellm calls need. Previously the
+    meta-agent's container just read /hyperagents/.env (copied in wholesale
+    by setup_initial_gen) via python-dotenv's own import-time side effect --
+    but that .env copy was removed (see setup_initial_gen's excluded_files)
+    because it let the meta-agent's bash tool trivially read live credentials
+    off disk during routine exploration. Explicit injection here is the same
+    fix domains/research/harness.py's _agent_env_vars already applies to the
+    task-agent containers: still visible to a sufficiently
+    determined agent via `env`/os.environ inside its own container, same as
+    before, but only these two keys -- not the .env file's full set
+    (SERPER_KEY, JINA_KEY, MINERU_TOKEN, ...) the meta-agent never needed."""
+    keys = {
+        "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY"),
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+    }
+    missing = [k for k, v in keys.items() if not v]
+    if missing:
+        raise RuntimeError(f"Missing required API key(s) in host environment/.env: {missing}")
+    return keys
 
 
 def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, num_samples=-1):
@@ -63,7 +96,7 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
         dnames = harness_polyglot(
             test_task_list=test_task_list,
             num_samples=-1,
-            max_workers=10,
+            max_workers=3,  # lowered from 10: parallel per-task pip installs previously destabilized the host
             model_name_or_path=model_name_or_path,
             model_patch_paths=patch_files,
             num_evals=1,
@@ -82,7 +115,7 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
         dnames = harness_polyglot(
             test_task_list=test_task_list + test_task_list_more,
             num_samples=num_samples,
-            max_workers=10,
+            max_workers=3,  # lowered from 10: parallel per-task pip installs previously destabilized the host
             model_name_or_path=model_name_or_path,
             model_patch_paths=patch_files,
             num_evals=1,
@@ -95,6 +128,17 @@ def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, nu
 
     # Update metadata
     update_node_metadata(output_dir, genid, {"run_full_eval": run_next_eval})
+
+
+def run_harness_research(root_dir, output_dir, genid):
+    # NOTE: like polyglot, research has its own harness because every task
+    # agent run must happen inside a fresh sandboxed container (see
+    # domains/research/harness.py) rather than through the generic
+    # per-domain CSV harness.
+    from domains.research.harness import run_harness_research as _run_harness_research
+
+    return _run_harness_research(root_dir, output_dir, genid)
+
 
 def select_next_parent_container(
     docker_client,
@@ -445,11 +489,27 @@ def generate(
     skip_staged_eval=False,
     edit_select_parent=False,
     max_generation=None,
+    require_pr_approval=False,
+    pr_remote="fork",
+    pr_poll_interval=30,
+    pr_root_branch=None,
+    meta_agent_model=None,
 ):
     # Setup local output folder
     prev_gen_dir = os.path.join(output_dir, f"gen_{parent_genid}")
     gen_output_dir = os.path.join(output_dir, f"gen_{current_genid}")
     os.makedirs(gen_output_dir, exist_ok=True)
+    # archive.jsonl and metadata.json both only get written once this whole
+    # function returns -- and it blocks on the PR review gate below, so
+    # while a PR is pending, external tooling (the dashboard's export
+    # script) has no persisted record this generation even exists yet, let
+    # alone what it's building on. This tiny breadcrumb, written immediately
+    # (unlike parent_genid itself, which only lives in this function's local
+    # scope until metadata.json is written), is the same pattern as run.pid/
+    # crash.log: a minimal signal for tooling that can't otherwise see
+    # in-progress state.
+    with open(os.path.join(gen_output_dir, "parent_genid.txt"), "w") as f:
+        f.write(str(parent_genid))
     logger = setup_logger(os.path.join(gen_output_dir, "generate.log"))  # Set up logger
     metadata = {
         "gen_output_dir": gen_output_dir,
@@ -538,6 +598,16 @@ def generate(
                         container, output_dir, container_output_folder, current_genid=current_genid,
                     )
 
+            # Copy the external steering directory into the container, if the human
+            # overseeing this run has dropped anything into it (papers, links, notes
+            # -- any format; it's up to the meta agent whether to read any of it).
+            # Lives at the real repo root, not root_dir, so the same path works
+            # across every run regardless of run_id.
+            steering_src = os.path.abspath("steering")
+            container_steering_dir = "/tmp/steering"
+            if os.path.isdir(steering_src) and os.listdir(steering_src):
+                copy_to_container(container, steering_src, container_steering_dir)
+
             # Run meta agent
             safe_log("Running meta agent...")
             container_agentoutput_folder = os.path.join(
@@ -583,10 +653,17 @@ def generate(
                     container_agentoutput_folder,
                     "--iterations_left",
                     str(max_generation - current_genid),
-                    *(
-                        # If domain is polyglot, for a fair comparison with DGM
-                        ["--model", "claude-3-5-sonnet-20241022"] if domains == ["polyglot"] else []
-                    ),
+                    # parent_genid is the string "initial" for the genesis node
+                    # (see archive.jsonl), not a real generation number -- only
+                    # pass it through when it's an actual int, so run_meta_agent.py's
+                    # argparse (type=int) doesn't choke on it. Omitting it leaves
+                    # args.parent_genid at its default of None, which
+                    # MetaAgent._parent_empty_diff_note already treats as "nothing
+                    # to check" -- this bug crashed every generation of a real run,
+                    # since the archive kept re-selecting "initial" as parent until
+                    # a valid child was ever produced.
+                    *(["--parent_genid", str(parent_genid)] if isinstance(parent_genid, int) else []),
+                    *(["--model", meta_agent_model] if meta_agent_model else []),
                 ]
 
             run_workdir = (
@@ -594,7 +671,7 @@ def generate(
                 if run_baseline and "no_selfimprove" in run_baseline
                 else f"/{REPO_NAME}"
             )
-            exec_result = container.exec_run(cmd=command, workdir=run_workdir)
+            exec_result = container.exec_run(cmd=command, workdir=run_workdir, environment=_meta_agent_env_vars())
             log_container_output(exec_result)
             metadata["parent_agent_success"] = exec_result.exit_code == 0
 
@@ -616,6 +693,40 @@ def generate(
 
             # Run commands to check if the agents are compilable
             run_commands_to_check_compilation(container, run_baseline=run_baseline, edit_select_parent=edit_select_parent)
+
+            # Human-in-the-loop PR review gate: open a PR for this self-modification
+            # and block until a human merges (accept) or closes (reject) it before
+            # letting it become part of the archive lineage.
+            if run_eval and require_pr_approval:
+                # root_dir is bind-mounted live into this container (see
+                # utils/pr_review.py's own docstring), and the container ran
+                # git commands (apply_diffs_container) against it as root --
+                # any objects that wrote land on the host root-owned, which
+                # breaks the host-side git operations below since the PR
+                # worktree shares the same .git/objects store. Reclaim
+                # ownership before touching it host-side. This is exactly
+                # the bug that silently dropped gen_4's PR in a real run --
+                # see utils/docker_utils.py's reclaim_host_ownership docstring.
+                reclaim_host_ownership(docker_client, root_dir)
+                with open(local_patch_file, "r") as f:
+                    raw_patch_content = f.read()
+                parent_branch = get_node_metadata_key(output_dir, parent_genid, "pr_branch") or pr_root_branch
+                approved, pr_branch, pr_number, pr_url = run_pr_review_gate(
+                    root_dir=root_dir,
+                    run_id=run_id,
+                    genid=current_genid,
+                    parent_branch=parent_branch,
+                    raw_patch_content=raw_patch_content,
+                    remote=pr_remote,
+                    poll_interval=pr_poll_interval,
+                    logging=safe_log,
+                )
+                metadata["pr_branch"] = pr_branch
+                metadata["pr_number"] = pr_number
+                metadata["pr_url"] = pr_url
+                metadata["pr_approved"] = approved
+                run_eval = run_eval and approved
+                metadata["run_eval"] = run_eval
 
         # Evaluate the produced agent
         if run_eval and "agent" in optimize_option:
@@ -736,10 +847,26 @@ def generate_loop(
     eval_test=False,
     skip_staged_eval=False,
     edit_select_parent=False,
+    require_pr_approval=False,
+    pr_remote="fork",
+    pr_poll_interval=30,
 ):
     # Initialization
     docker_client = docker.DockerClient()
     parent_selection = "latest" if run_baseline == "no_archive" else parent_selection
+    # Paper default is claude-3-5-sonnet-20241022 for a fair comparison with DGM on
+    # Polyglot; switched to DeepSeek v4 flash (out of Anthropic credits). NOTE: must
+    # be computed from this (unfiltered) `domains`, not generate()'s own `domains`
+    # param -- generate() always receives polyglot/research filtered out of its
+    # domains list (both use a separate per-task container path), so checking
+    # there is always False and silently falls back to run_meta_agent.py's own
+    # default model.
+    # flash was swapped for pro after two separate real-run failures traced to
+    # flash leaking corrupted internal special tokens into its output (e.g. a
+    # closing tag rendered as "</｜｜DSML｜｜tool>" instead of "</json>"),
+    # which check_for_tool_uses's tag-based parser can never recognize -- a
+    # known formatting-reliability issue with this model, not a bug in our code.
+    meta_agent_model = "deepseek/deepseek-v4-pro" if domains in (["polyglot"], ["research"]) else None
     if resume_from:
         output_dir = os.path.normpath(os.path.abspath(resume_from))
         run_id = os.path.basename(output_dir).split("generate_")[-1]
@@ -754,6 +881,7 @@ def generate_loop(
             eval_test=eval_test,
             edit_select_parent=edit_select_parent,
         )
+        pr_root_branch = push_root_branch(root_dir, root_commit, run_id, remote=pr_remote) if require_pr_approval else None
         archive = load_archive_data(
             os.path.join(output_dir, "archive.jsonl"), last_only=True
         )[
@@ -783,6 +911,7 @@ def generate_loop(
             eval_test=eval_test,
             edit_select_parent=edit_select_parent,
         )
+        pr_root_branch = push_root_branch(root_dir, root_commit, run_id, remote=pr_remote) if require_pr_approval else None
 
         # Create initial node
         if meta_patch_files is None or len(meta_patch_files) <= 0:
@@ -821,7 +950,7 @@ def generate_loop(
             archive = update_and_save_archive(output_dir, [], new_node=0)
             metadata = generate(
                 docker_client,
-                [d for d in domains if d != "polyglot"],
+                [d for d in domains if d not in ("polyglot", "research")],
                 output_dir,
                 run_id,
                 current_genid=0,
@@ -845,6 +974,9 @@ def generate_loop(
             # Evaluate the agent on polyglot if needed
             if "polyglot" in domains:
                 run_harness_polyglot(root_dir, output_dir, 0, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("polyglot")])
+            # Evaluate the agent on research if needed
+            if "research" in domains:
+                run_harness_research(root_dir, output_dir, 0)
 
         # Evaluate the entire archive as an ensemble
         eval_ensemble = (
@@ -885,6 +1017,15 @@ def generate_loop(
         args_str = ", ".join([f"{k}={v}" for k, v in args_dict.items()])
         f.write(f"Args: {args_str}\n")
 
+    # Record our own PID so external tooling (e.g. the dashboard export
+    # script) can tell whether this run's orchestrating process is still
+    # alive without relying on output-file mtimes -- those go quiet for long,
+    # perfectly healthy stretches whenever a single generation's container
+    # (meta-agent or task-agent) is mid-run, since nothing gets copied back
+    # to the host filesystem until that container's execution finishes.
+    with open(os.path.join(output_dir, "run.pid"), "w") as f:
+        f.write(str(os.getpid()))
+
     # Run generations
     start_genid = len(archive)
     if not edit_select_parent or run_baseline == "no_archive":
@@ -897,126 +1038,162 @@ def generate_loop(
             archive,
             root_dir, root_commit,
         )
-    for current_genid in range(start_genid, max_generation + 1):
-        metadata = generate(
-            docker_client,
-            [d for d in domains if d != "polyglot"],
-            output_dir,
-            run_id,
-            current_genid,
-            parent_genid=parent_genid,
-            root_dir=root_dir,
-            root_commit=root_commit,
-            eval_samples=eval_samples,
-            eval_workers=eval_workers,
-            eval_subsets=eval_subsets,
-            meta_patch_files=meta_patch_files,
-            run_meta_agent=True,
-            run_baseline=run_baseline,
-            optimize_option=optimize_option,
-            agent_archive_path=agent_archive_path,
-            eval_test=eval_test,
-            skip_staged_eval=skip_staged_eval,
-            edit_select_parent=edit_select_parent,
-            max_generation=max_generation,
-        )
-
-        # NOTE: need to update and save archive before running ensembling eval
-        archive = update_and_save_archive(output_dir, archive, new_node=current_genid)
-
-        # Parent agent failed, update the metadata in the parent node
-        if not metadata["parent_agent_success"]:
-            update_node_metadata(output_dir, parent_genid, {"valid_parent": False})
-
-        # Evaluate the agent on polyglot if needed
-        if "polyglot" in domains:
-            run_harness_polyglot(root_dir, output_dir, current_genid, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("polyglot")])
-
-        # Evaluate the entire archive as an ensemble
-        eval_ensemble = (
-            "ensemble" in optimize_option
-            and all(can_domain_ensembled(domain) for domain in domains)
-            and run_baseline != "no_archive"
-        )
-        if metadata["run_eval"] and eval_ensemble:
-            for domain, eval_subset, eval_n in zip(domains, eval_subsets, eval_samples):
-                _ = get_ensemble_scores_container(
-                    docker_client,
-                    domain,
-                    (
-                        output_dir
-                        if optimize_option != "only_ensemble"
-                        else agent_archive_path
-                    ),
-                    gen_output_dir=metadata["gen_output_dir"],
-                    root_dir=root_dir,
-                    root_commit=root_commit,
-                    prev_patch_files=metadata["prev_patch_files"]
-                    + metadata["curr_patch_files"],
-                    num_samples=eval_n,
-                    subsets=[
-                        eval_subset,
-                        eval_subset.replace("_train", "_val"),
-                        *(
-                            [eval_subset.replace("_train", "_test")]
-                            if eval_test
-                            else []
-                        ),
-                    ],
-                )
-
-        # Make analysis plots
-        # Per-domain plots
-        for domain in domains:
-            splits = get_domain_splits(domain)
-            if optimize_option == "only_ensemble":
-                score_types = ["ensemble"]
-            elif eval_ensemble:
-                score_types = ["agent", "ensemble", "max"]
-            else:
-                score_types = ["agent"]
-            for split in splits:  # pyright: ignore
-                for stype in score_types:
-                    plot_progress_single(domain, output_dir, split=split, type=stype)
-                    visualize_archive_single(
-                        domain, output_dir, split=split, type=stype
-                    )
-
-        # Combined together plots across all domains (if there is more than one domain)
-        if len(domains) > 1:
-            domain_splits_sets = [set(get_domain_splits(d)) for d in domains]
-            common_splits = (
-                sorted(list(set.intersection(*domain_splits_sets)))
-                if domain_splits_sets
-                else []
-            )
-            if optimize_option == "only_ensemble":
-                together_score_types = ["ensemble"]
-            elif eval_ensemble:
-                together_score_types = ["agent", "ensemble", "max"]
-            else:
-                together_score_types = ["agent"]
-            for split in common_splits:
-                for stype in together_score_types:
-                    plot_progress_together(domains, output_dir, split=split, type=stype)
-                    visualize_archive_together(
-                        domains, output_dir, split=split, type=stype
-                    )
-
-        # Select next parent
-        parent_genid = None
-        if not edit_select_parent or run_baseline == "no_archive":
-            parent_genid = select_parent(archive, output_dir, domains, method=parent_selection)
-        else:
-            parent_genid = select_next_parent_container(
+    try:
+        for current_genid in range(start_genid, max_generation + 1):
+            metadata = generate(
                 docker_client,
-                domains,
+                [d for d in domains if d not in ("polyglot", "research")],
                 output_dir,
-                archive,
-                root_dir, root_commit,
+                run_id,
+                current_genid,
+                parent_genid=parent_genid,
+                root_dir=root_dir,
+                root_commit=root_commit,
+                eval_samples=eval_samples,
+                eval_workers=eval_workers,
+                eval_subsets=eval_subsets,
+                meta_patch_files=meta_patch_files,
+                run_meta_agent=True,
+                run_baseline=run_baseline,
+                optimize_option=optimize_option,
+                agent_archive_path=agent_archive_path,
+                eval_test=eval_test,
+                skip_staged_eval=skip_staged_eval,
+                edit_select_parent=edit_select_parent,
+                max_generation=max_generation,
+                require_pr_approval=require_pr_approval,
+                pr_remote=pr_remote,
+                pr_poll_interval=pr_poll_interval,
+                pr_root_branch=pr_root_branch,
+                meta_agent_model=meta_agent_model,
             )
+    
+            # NOTE: need to update and save archive before running ensembling eval
+            archive = update_and_save_archive(output_dir, archive, new_node=current_genid)
+    
+            # Parent agent failed, update the metadata in the parent node
+            if not metadata["parent_agent_success"]:
+                update_node_metadata(output_dir, parent_genid, {"valid_parent": False})
+    
+            # Evaluate the agent on polyglot if needed -- skipped entirely on
+            # an empty/unapproved diff: the agent code is then byte-identical
+            # to its already-scored parent, so evaluating it again is pure
+            # waste (confirmed live: this was burning a full eval pass on
+            # every empty-diff generation all session).
+            if "polyglot" in domains and metadata["run_eval"]:
+                run_harness_polyglot(root_dir, output_dir, current_genid, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("polyglot")])
 
-        print(f"generate_loop: generation {current_genid} completed, parent {parent_genid}")
+            # Evaluate the agent on research if needed -- skipped entirely on
+            # an empty/unapproved diff for the same reason as polyglot above.
+            if "research" in domains and metadata["run_eval"]:
+                run_harness_research(root_dir, output_dir, current_genid)
+    
+            # Evaluate the entire archive as an ensemble
+            eval_ensemble = (
+                "ensemble" in optimize_option
+                and all(can_domain_ensembled(domain) for domain in domains)
+                and run_baseline != "no_archive"
+            )
+            if metadata["run_eval"] and eval_ensemble:
+                for domain, eval_subset, eval_n in zip(domains, eval_subsets, eval_samples):
+                    _ = get_ensemble_scores_container(
+                        docker_client,
+                        domain,
+                        (
+                            output_dir
+                            if optimize_option != "only_ensemble"
+                            else agent_archive_path
+                        ),
+                        gen_output_dir=metadata["gen_output_dir"],
+                        root_dir=root_dir,
+                        root_commit=root_commit,
+                        prev_patch_files=metadata["prev_patch_files"]
+                        + metadata["curr_patch_files"],
+                        num_samples=eval_n,
+                        subsets=[
+                            eval_subset,
+                            eval_subset.replace("_train", "_val"),
+                            *(
+                                [eval_subset.replace("_train", "_test")]
+                                if eval_test
+                                else []
+                            ),
+                        ],
+                    )
+    
+            # Make analysis plots
+            # Per-domain plots
+            for domain in domains:
+                splits = get_domain_splits(domain)
+                if optimize_option == "only_ensemble":
+                    score_types = ["ensemble"]
+                elif eval_ensemble:
+                    score_types = ["agent", "ensemble", "max"]
+                else:
+                    score_types = ["agent"]
+                for split in splits:  # pyright: ignore
+                    for stype in score_types:
+                        # Plotting is a nice-to-have; never let it take down a long-running
+                        # experiment (e.g. a missing/broken optional plotting dependency).
+                        try:
+                            plot_progress_single(domain, output_dir, split=split, type=stype)
+                            visualize_archive_single(
+                                domain, output_dir, split=split, type=stype
+                            )
+                        except Exception as e:
+                            safe_log(f"Warning: plotting failed for {domain}/{split}/{stype}: {e}")
+    
+            # Combined together plots across all domains (if there is more than one domain)
+            if len(domains) > 1:
+                domain_splits_sets = [set(get_domain_splits(d)) for d in domains]
+                common_splits = (
+                    sorted(list(set.intersection(*domain_splits_sets)))
+                    if domain_splits_sets
+                    else []
+                )
+                if optimize_option == "only_ensemble":
+                    together_score_types = ["ensemble"]
+                elif eval_ensemble:
+                    together_score_types = ["agent", "ensemble", "max"]
+                else:
+                    together_score_types = ["agent"]
+                for split in common_splits:
+                    for stype in together_score_types:
+                        try:
+                            plot_progress_together(domains, output_dir, split=split, type=stype)
+                            visualize_archive_together(
+                                domains, output_dir, split=split, type=stype
+                            )
+                        except Exception as e:
+                            safe_log(f"Warning: plotting failed for {split}/{stype}: {e}")
+    
+            # Select next parent
+            parent_genid = None
+            if not edit_select_parent or run_baseline == "no_archive":
+                parent_genid = select_parent(archive, output_dir, domains, method=parent_selection)
+            else:
+                parent_genid = select_next_parent_container(
+                    docker_client,
+                    domains,
+                    output_dir,
+                    archive,
+                    root_dir, root_commit,
+                )
+    
+            print(f"generate_loop: generation {current_genid} completed, parent {parent_genid}")
+    except Exception:
+        import traceback
+        # Any uncaught exception during the generation loop (e.g. the
+        # anchor-cache-missing crash this was added after) would otherwise
+        # only appear on this process's own stdout/stderr -- wherever the
+        # launching shell happened to redirect it, if anywhere. Recording it
+        # under output_dir makes crashes discoverable at a predictable path
+        # regardless of launch method (dashboard export.py scans this file).
+        with open(os.path.join(output_dir, "crash.log"), "a") as f:
+            f.write(f"\n=== Uncaught exception in generate_loop at gen {current_genid} ({datetime.now().isoformat()}) ===\n")
+            f.write(traceback.format_exc())
+        raise
+
 
     # Return output dir
     return output_dir
@@ -1042,6 +1219,8 @@ if __name__ == "__main__":
             "polyglot",  # separate harness from the rest
             "imo_grading",
             "imo_proof",
+            "arc_agi3",
+            "research",  # separate Docker-sandboxed harness, see domains/research/harness.py
         ],
         required=True,
         help="One or more domains to evaluate (must be from the allowed list)",
@@ -1151,6 +1330,29 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to allow the agent to edit the selection mechanism",
     )
+    parser.add_argument(
+        "--require_pr_approval",
+        default=False,
+        action="store_true",
+        help=(
+            "Gate every self-modification on human review: each generation's diff is "
+            "pushed as a branch and opened as a PR against --pr_remote (must be a git "
+            "remote you have write access to, e.g. your own fork), and the run blocks "
+            "until you merge (accept) or close (reject) it before evaluating/archiving it."
+        ),
+    )
+    parser.add_argument(
+        "--pr_remote",
+        type=str,
+        default="fork",
+        help="Git remote (configured in this repo) to push self-modification branches/PRs to",
+    )
+    parser.add_argument(
+        "--pr_poll_interval",
+        type=int,
+        default=30,
+        help="Seconds between checks of whether a pending PR has been merged/closed",
+    )
     args = parser.parse_args()
 
     # Post-parse validation
@@ -1186,4 +1388,7 @@ if __name__ == "__main__":
         eval_test=args.eval_test,
         skip_staged_eval=args.skip_staged_eval,
         edit_select_parent=args.edit_select_parent,
+        require_pr_approval=args.require_pr_approval,
+        pr_remote=args.pr_remote,
+        pr_poll_interval=args.pr_poll_interval,
     )

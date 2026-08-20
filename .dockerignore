@@ -1,0 +1,14 @@
+.git
+Dockerfile
+.dockerignore
+outputs/
+outputs_os/
+venv_nat/
+venv/
+__pycache__/
+*.pyc
+.env
+environment_files/
+recordings/
+domains/polyglot/SWE-bench/
+domains/polyglot/polyglot-benchmark/
