@@ -48,7 +48,7 @@ from utils.gl_utils import (
     is_starting_node,
     process_meta_patch_files,
 )
-from utils.pr_review import push_root_branch, run_pr_review_gate
+from utils.pr_review import push_root_branch, resolve_remote_branch_sha, run_pr_review_gate
 
 # Nothing on the host otherwise triggers python-dotenv (it's normally loaded
 # as litellm's own import side effect, which only happens inside containers)
@@ -574,6 +574,22 @@ def generate(
         metadata["prev_patch_files"] += patch_files
         commit_hash = apply_diffs_container(container, patch_files)
 
+        # Pin the parent branch's commit now, before the meta-agent runs (it
+        # can take upwards of 15-20 minutes) -- not at push time, well after.
+        # parent_branch is a mutable ref: if another generation built from
+        # this same parent gets its own PR merged in the meantime, the merge
+        # updates parent_branch itself (GitHub merges the head into the PR's
+        # base branch), so fetching it live at push time can silently no
+        # longer match what this generation's own diff was computed against.
+        # Confirmed live: this exact race broke a sibling generation's push
+        # ("patch does not apply") in a real run. Only relevant under PR
+        # review, and only once a parent branch actually exists to pin.
+        parent_commit_pin = None
+        if require_pr_approval:
+            parent_branch_for_pin = get_node_metadata_key(output_dir, parent_genid, "pr_branch") or pr_root_branch
+            if parent_branch_for_pin:
+                parent_commit_pin = resolve_remote_branch_sha(root_dir, pr_remote, parent_branch_for_pin)
+
         if run_meta_agent:
             if run_baseline and "dgm" in run_baseline:
                 # Get problem statement (DGM specific)
@@ -731,6 +747,7 @@ def generate(
                     remote=pr_remote,
                     poll_interval=pr_poll_interval,
                     logging=safe_log,
+                    parent_commit=parent_commit_pin,
                 )
                 metadata["pr_branch"] = pr_branch
                 metadata["pr_number"] = pr_number

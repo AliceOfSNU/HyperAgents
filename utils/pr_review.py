@@ -29,6 +29,7 @@ touching root_dir's own checkout at all.
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 
@@ -50,6 +51,23 @@ def _get_pr_worktree(root_dir, run_id):
     root_dir's own live, container-mounted working tree. Reused across
     generations within a run; detached HEAD so it's never tied to one branch."""
     worktree_dir = f"{root_dir.rstrip('/')}_pr_worktree_{run_id}"
+    if os.path.isdir(worktree_dir):
+        # The worktree directory can survive on disk after git's own admin
+        # metadata for it (root_dir/.git/worktrees/<name>) goes missing --
+        # observed live: something (most likely git's own opportunistic
+        # gc/pruning) wiped root_dir/.git/worktrees/ entirely mid-run, while
+        # this directory and its stale .git file (still pointing at the now
+        # -gone admin dir) remained. Every git command run here afterward
+        # fails with "fatal: not a git repository", forever, since the old
+        # `os.path.isdir` check alone can never detect this. Verify it's
+        # actually functional and self-heal if not, rather than silently
+        # reusing a permanently broken worktree for the rest of the run.
+        check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"], cwd=worktree_dir, capture_output=True, text=True,
+        )
+        if check.returncode != 0:
+            shutil.rmtree(worktree_dir, ignore_errors=True)
+            _run(["git", "worktree", "prune"], cwd=root_dir, check=False)
     if not os.path.isdir(worktree_dir):
         _run(["git", "worktree", "add", "--detach", worktree_dir], cwd=root_dir)
     return worktree_dir
@@ -74,9 +92,31 @@ def push_root_branch(root_dir, root_commit, run_id, remote="fork"):
     return branch
 
 
-def commit_and_push_generation(root_dir, run_id, genid, parent_branch, patch_content, remote="fork"):
-    """Branch off parent_branch, apply this generation's own diff (already filtered
-    to exclude domains/ changes) as a single commit, and push it.
+def resolve_remote_branch_sha(root_dir, remote, branch):
+    """Return branch's current commit SHA on remote, via a lightweight
+    `git ls-remote` (no fetch/checkout needed) -- used to pin a generation's
+    parent commit at the moment its meta-agent starts, before a sibling
+    generation (built from the same parent) can merge and move the branch
+    out from under it. Returns None if the branch doesn't exist yet."""
+    result = _run(["git", "ls-remote", remote, branch], cwd=root_dir, check=False)
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    return line.split()[0] if line else None
+
+
+def commit_and_push_generation(root_dir, run_id, genid, parent_branch, patch_content, remote="fork", parent_commit=None):
+    """Branch off parent_branch (or, if given, the pinned parent_commit SHA),
+    apply this generation's own diff (already filtered to exclude domains/
+    changes) as a single commit, and push it.
+
+    parent_commit matters because parent_branch is a mutable ref: if another
+    generation built from the same parent gets its PR merged first, merging
+    updates parent_branch itself (GitHub merges the head into the PR's base
+    branch) -- confirmed live, this silently broke a sibling generation's own
+    push moments later ("patch does not apply") because by the time it tried
+    to push, parent_branch no longer looked like what its own diff was
+    computed against. Pinning to the exact commit the meta-agent actually
+    started from avoids that regardless of what happens to the branch ref in
+    the meantime.
 
     Returns the new branch name. Raises RuntimeError if the patch fails to apply
     -- callers should treat that the same as any other invalid/non-compiling
@@ -86,7 +126,8 @@ def commit_and_push_generation(root_dir, run_id, genid, parent_branch, patch_con
     worktree_dir = _get_pr_worktree(root_dir, run_id)
 
     _run(["git", "fetch", remote, parent_branch], cwd=worktree_dir)
-    _run(["git", "checkout", "-f", "-B", branch, f"{remote}/{parent_branch}"], cwd=worktree_dir)
+    base_ref = parent_commit or f"{remote}/{parent_branch}"
+    _run(["git", "checkout", "-f", "-B", branch, base_ref], cwd=worktree_dir)
     _run(["git", "clean", "-fdx"], cwd=worktree_dir)
 
     apply_result = subprocess.run(
@@ -169,13 +210,14 @@ def wait_for_pr_decision(repo_slug, pr_number, poll_interval=30, logging=print):
         time.sleep(poll_interval)
 
 
-def run_pr_review_gate(root_dir, run_id, genid, parent_branch, raw_patch_content, remote="fork", poll_interval=30, logging=print):
+def run_pr_review_gate(root_dir, run_id, genid, parent_branch, raw_patch_content, remote="fork", poll_interval=30, logging=print, parent_commit=None):
     """High-level orchestration for one generation's review gate.
 
     Filters raw_patch_content down to the lineage-relevant diff (excluding
     domains/, which never gets applied to the archive either -- see
-    apply_diffs_container), pushes it as a branch off parent_branch, opens a
-    PR describing it, and blocks until a human merges or closes it.
+    apply_diffs_container), pushes it as a branch off parent_branch (pinned to
+    parent_commit if given -- see commit_and_push_generation), opens a PR
+    describing it, and blocks until a human merges or closes it.
 
     workspace/ is excluded too, as defense in depth on top of the repo's own
     .gitignore entry: research-domain task data (real data files, PDFs,
@@ -195,7 +237,7 @@ def run_pr_review_gate(root_dir, run_id, genid, parent_branch, raw_patch_content
         logging("No lineage-relevant changes in this generation's diff; skipping PR.")
         return True, parent_branch, None, None
 
-    branch = commit_and_push_generation(root_dir, run_id, genid, parent_branch, patch_content, remote=remote)
+    branch = commit_and_push_generation(root_dir, run_id, genid, parent_branch, patch_content, remote=remote, parent_commit=parent_commit)
     title, body = generate_pr_description(patch_content)
     repo_slug = get_remote_slug(root_dir, remote=remote)
     pr_number, pr_url = open_pr(repo_slug, base_branch=parent_branch, head_branch=branch, title=title, body=body)
