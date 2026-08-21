@@ -64,6 +64,11 @@ def chat_with_agent(
     multiple_tool_calls=False,  # Whether to allow multiple tool calls in a single response
     max_tool_calls=40,  # Maximum number of tool calls allowed in a single response, -1 for unlimited
     plan_act_observe=False,  # See docstring
+    temperature=0.0,  # Every existing caller relies on the old implicit 0.0
+    # default (deterministic-as-possible tool use); real sampling diversity
+    # (temperature>0) is opt-in, currently only meaningful for
+    # skills/branching's sibling rollouts, which need rounds to actually
+    # diverge from an identical starting point.
 ):
     """Uses the model provider's native function-calling (via litellm's
     `tools=` parameter) rather than a prompt-engineered text format. Real
@@ -122,6 +127,7 @@ def chat_with_agent(
             model=model,
             msg_history=new_msg_history,
             tools=litellm_tools,
+            temperature=temperature,
         )
         tool_calls = info.get("tool_calls") or []
 
@@ -137,6 +143,7 @@ def chat_with_agent(
                 model=model,
                 msg_history=new_msg_history,
                 tools=litellm_tools,
+                temperature=temperature,
             )
             logging(f"Retried after truncation. Output: {repr(response)}")
             tool_calls = info.get("tool_calls") or []
@@ -225,6 +232,7 @@ def chat_with_agent(
                 model=model,
                 msg_history=new_msg_history + tool_result_msgs,
                 tools=litellm_tools,
+                temperature=temperature,
             )
             tool_calls = info.get("tool_calls") or []
 

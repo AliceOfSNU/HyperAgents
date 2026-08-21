@@ -38,7 +38,18 @@ class MetaAgent(AgentSystem):
             "memory_append tool writes structured items there (see its own "
             "description for the schema); there's no retrieval tool, so reading "
             "it back -- whether to, when, what's relevant -- is entirely your call, "
-            "same as any other file."
+            "same as any other file.\n\n"
+            f"`{repo_path}/skills/` holds packaged capabilities beyond your "
+            "built-in tools -- each is a directory with its own SKILL.md "
+            "(what it's for, when to reach for it, how to invoke it) plus "
+            "whatever scripts it needs. Check there for something relevant "
+            "before assuming you have to do a thing entirely by hand. "
+            "skills/branching/ is the first one: sampling several real "
+            "continuations from a specific point in a task-agent trajectory "
+            "to find out which choice actually mattered, instead of guessing "
+            "from reading one trajectory alone -- see its own SKILL.md before "
+            "using it, including why it's deferred (you queue it, a later "
+            "session reads the result) and what it costs."
         )
 
         parent_note = self._parent_empty_diff_note(eval_path, parent_genid)

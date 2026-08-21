@@ -841,6 +841,20 @@ def generate(
         # Cleanup container
         cleanup_container(container)
 
+        # Process any pending skills/branching requests queued during this
+        # generation's own meta-agent session -- host-side, deferred (see
+        # skills/branching/SKILL.md for why the meta-agent's own sandboxed
+        # container can't do this itself). Runs every generation regardless
+        # of this one's own outcome, since a queued request may reference an
+        # earlier generation's trajectory entirely. Only relevant for
+        # deep_swe; lazy-imported so other domains carry no dependency on it.
+        if "deep_swe" in domains:
+            from domains.deep_swe.branch_orchestrator import process_pending_branch_requests
+            try:
+                process_pending_branch_requests()
+            except Exception as e:
+                safe_log(f"Error processing pending branch requests: {e}")
+
         # Save metadata
         eval_successful = all(
             [
