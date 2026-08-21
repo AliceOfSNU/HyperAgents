@@ -34,8 +34,11 @@ class MetaAgent(AgentSystem):
             "including you right now, runs through) is just as much yours to inspect "
             "and improve as the task-facing agent code (task_agent.py, "
             "swe_task_agent.py) is.\n\n"
-            f"`{repo_path}/memory.md` is yours too -- currently empty, a blank slate. "
-            "Whether and how to use it is entirely your call."
+            f"`{repo_path}/memory.jsonl` is yours too -- currently empty. The "
+            "memory_append tool writes structured items there (see its own "
+            "description for the schema); there's no retrieval tool, so reading "
+            "it back -- whether to, when, what's relevant -- is entirely your call, "
+            "same as any other file."
         )
 
         parent_note = self._parent_empty_diff_note(eval_path, parent_genid)
