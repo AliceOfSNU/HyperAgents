@@ -29,9 +29,13 @@ DEEPSEEK_FLASH_MODEL = "deepseek/deepseek-v4-flash"
 
 litellm.drop_params=True
 
+REQUEST_TIMEOUT_SEC = 180  # See get_response_from_llm's own completion_kwargs
+# for why this exists at all -- comfortably under max_time below so a single
+# hang still leaves room for a retry within the overall backoff budget.
+
 @backoff.on_exception(
     backoff.expo,
-    (requests.exceptions.RequestException, json.JSONDecodeError, KeyError),
+    (requests.exceptions.RequestException, json.JSONDecodeError, KeyError, litellm.exceptions.Timeout),
     max_time=600,
     max_value=60,
 )
@@ -71,6 +75,12 @@ def get_response_from_llm(
     completion_kwargs = {
         "model": model,
         "messages": new_msg_history,
+        # Without this, a request that never gets a response (confirmed
+        # live: sockets stuck in CLOSE_WAIT, the remote end had already
+        # hung up) just blocks forever -- litellm has no default timeout of
+        # its own. This turns that into litellm.exceptions.Timeout, which
+        # the backoff decorator above now retries instead of hanging.
+        "timeout": REQUEST_TIMEOUT_SEC,
     }
     if tools:
         completion_kwargs["tools"] = tools
