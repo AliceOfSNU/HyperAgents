@@ -9,6 +9,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 
 import numpy as np
 
@@ -241,7 +242,28 @@ def setup_initial_gen(
     # Resume from previous run
     if resume:
         root_dir = os.path.abspath(os.path.join(output_dir, f"gen_initial/{REPO_NAME}"))
-        commit_hash = get_git_commit_hash(root_dir)
+        # root_dir is a single shared checkout that every generation's
+        # container bind-mounts live and commits directly onto during its own
+        # processing (see utils/pr_review.py's docstring); generate()'s own
+        # `finally` block resets it back to root_commit afterward -- but that
+        # reset only runs on a normal return or a Python-level exception, not
+        # on an external SIGTERM (Python's default signal handling doesn't
+        # run `finally` blocks for SIGTERM, only for SIGINT/KeyboardInterrupt).
+        # Trusting root_dir's live HEAD here would silently resume on top of
+        # whatever half-finished generation was in flight when the process
+        # was killed -- confirmed live: this exact gap corrupted gen_5/gen_6
+        # of a real run after a mid-generation restart. root_commit.txt
+        # (written once at genesis, below) is the one source of truth for
+        # what "clean" means; always reset to it before resuming.
+        root_commit_marker = os.path.join(output_dir, "gen_initial", "root_commit.txt")
+        if os.path.exists(root_commit_marker):
+            commit_hash = open(root_commit_marker).read().strip()
+            subprocess.run(["git", "reset", "--hard", commit_hash], cwd=root_dir, check=True)
+            subprocess.run(["git", "clean", "-fd"], cwd=root_dir, check=True)
+        else:
+            # Pre-existing run from before this marker file existed -- fall
+            # back to the old (unsafe) behavior rather than failing outright.
+            commit_hash = get_git_commit_hash(root_dir)
         return root_dir, commit_hash
 
     # Make a copy of the eval folder
@@ -445,6 +467,11 @@ def setup_initial_gen(
 
     # Get commit hash
     commit_hash = commit_repo(root_dir)
+
+    # Persisted once, here, as the one source of truth for what "clean"
+    # means on a later --resume_from -- see the resume branch above.
+    with open(os.path.join(output_dir, "gen_initial", "root_commit.txt"), "w") as f:
+        f.write(commit_hash)
 
     # Return info
     return root_dir, commit_hash
