@@ -8,7 +8,7 @@ def tool_info():
 * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
 * You don't have access to the internet via this tool.
 * You do have access to a mirror of common linux and python packages via apt and pip.
-* State is persistent across command calls and discussions with the user.
+* Each command runs in a fresh, non-interactive bash shell; shell state (cwd, exported variables) is not preserved between calls. Use absolute paths or `cd /path && ...` in a single command.
 * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
 * Please avoid commands that may produce a very large amount of output.
 * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.""",
@@ -38,7 +38,7 @@ class BashSession:
         if self._started:
             return
         self._process = await asyncio.create_subprocess_shell(
-            "/bin/bash -i",
+            "/bin/bash --noprofile --norc",
             preexec_fn=os.setsid,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -47,13 +47,27 @@ class BashSession:
         )
         self._started = True
 
-    def stop(self):
+    async def stop(self):
         if not self._started:
             return
-        if self._process.returncode is None:
-            self._process.terminate()
-        self._process = None
-        self._started = False
+        process = self._process
+        try:
+            if process is not None and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+            transport = getattr(process, "_transport", None)
+            if transport is not None:
+                transport.close()
+        except Exception:
+            if process is not None and process.returncode is None:
+                process.kill()
+        finally:
+            self._process = None
+            self._started = False
 
     async def run(self, command):
         if not self._started:
@@ -130,12 +144,9 @@ def filter_error(error):
 
 async def tool_function_call(command):
     """Execute a command in the bash shell."""
+    bash_session = BashSession()
     try:
-        bash_session = BashSession()
-
-        if not bash_session._started:
-            await bash_session.start()
-
+        await bash_session.start()
         output, error = await bash_session.run(command)
         error = filter_error(error)
         result = ""
@@ -146,6 +157,8 @@ async def tool_function_call(command):
         return result.strip()
     except Exception as e:
         return f"Error: {str(e)}"
+    finally:
+        await bash_session.stop()
 
 def tool_function(command):
     return asyncio.run(tool_function_call(command))
