@@ -7,6 +7,7 @@ to Drive.
 Run standalone for a one-off export, or via run_loop.py for the scheduled
 pipeline.
 """
+import ast
 import json
 import re
 import subprocess
@@ -40,14 +41,26 @@ def _read_text(path):
 
 
 def _parse_run_args(run_dir):
-    """Pull max_generation/domains out of generate_loop.log's own debug
-    print of its argv (there's no other persisted record of these)."""
+    """Pull max_generation/domain out of generate_loop.log's own debug
+    print of its argv (there's no other persisted record of these). Every
+    run so far passes exactly one domain via --domains, so the eval
+    directory name (f"{domain}_eval", matching utils/gl_utils.py's own
+    eval_dirname convention and each domain's harness.py) and the exported
+    "domain" field both key off this single value -- defaulting to
+    "research" only for pre-existing runs from before this parsing existed."""
     log_text = _read_text(run_dir / "generate_loop.log") or ""
     m = re.search(r"max_generation=(\d+)", log_text)
     max_generation = int(m.group(1)) if m else None
     m = re.search(r"domains=(\[[^\]]*\])", log_text)
-    domains = m.group(1) if m else None
-    return max_generation, domains
+    domain = "research"
+    if m:
+        try:
+            parsed = ast.literal_eval(m.group(1))
+            if parsed:
+                domain = parsed[0]
+        except (ValueError, SyntaxError):
+            pass
+    return max_generation, domain
 
 
 def _load_archive(run_dir):
@@ -68,8 +81,8 @@ def _load_gen_metadata(run_dir, genid):
     return _read_json(_gen_dir(run_dir, genid) / "metadata.json")
 
 
-def _load_gen_report(run_dir, genid):
-    return _read_json(_gen_dir(run_dir, genid) / "research_eval" / "report.json")
+def _load_gen_report(run_dir, genid, domain):
+    return _read_json(_gen_dir(run_dir, genid) / f"{domain}_eval" / "report.json")
 
 
 def _model_patch_size(run_dir, genid):
@@ -88,7 +101,7 @@ def _extract_genuine_tracebacks(text):
     return snippets
 
 
-def _find_errors(run_dir, genids, limit=10):
+def _find_errors(run_dir, genids, domain, limit=10):
     """Scan each generation's log files, plus the run-level crash.log
     (written by generate_loop.py's own top-level exception handler -- see
     its comment), for genuine traceback snippets, skipping the known-benign
@@ -99,7 +112,7 @@ def _find_errors(run_dir, genids, limit=10):
         for snippet in _extract_genuine_tracebacks(crash_text):
             errors.append({"genid": None, "source": "crash.log", "snippet": snippet})
     for genid in genids:
-        for rel in ("generate.log", "research_eval/generate.log"):
+        for rel in ("generate.log", f"{domain}_eval/generate.log"):
             text = _read_text(_gen_dir(run_dir, genid) / rel)
             if not text:
                 continue
@@ -200,9 +213,9 @@ def _agent_scores(report):
     return report.get("node_utility"), real_avg
 
 
-def build_agent_detail(run_dir, run_id, genid, parent_genid, all_genids):
+def build_agent_detail(run_dir, run_id, genid, parent_genid, all_genids, domain):
     meta = _load_gen_metadata(run_dir, genid) or {}
-    report = _load_gen_report(run_dir, genid)
+    report = _load_gen_report(run_dir, genid, domain)
     node_utility, real_avg = _agent_scores(report)
     has_diff = _model_patch_size(run_dir, genid) > 0
 
@@ -219,7 +232,7 @@ def build_agent_detail(run_dir, run_id, genid, parent_genid, all_genids):
         log_pr = _scan_pr_from_log(run_dir, genid)
         pr = {"number": log_pr["number"], "url": log_pr["url"], "approved": None} if log_pr else None
 
-    log_local = _gen_dir(run_dir, genid) / "research_eval" / "generate.log"
+    log_local = _gen_dir(run_dir, genid) / f"{domain}_eval" / "generate.log"
     return {
         "run_id": run_id,
         "genid": genid,
@@ -282,7 +295,7 @@ def _read_parent_genid_breadcrumb(run_dir, genid):
 
 def build_run_export(run_dir):
     run_id = run_dir.name
-    max_generation, domains = _parse_run_args(run_dir)
+    max_generation, domain = _parse_run_args(run_dir)
     genids = _load_archive(run_dir)
 
     in_flight_genid = _find_in_flight_genid(run_dir, run_id, genids)
@@ -294,7 +307,7 @@ def build_run_export(run_dir):
     numeric_genids = [g for g in genids if isinstance(g, int)]
     current_genid = max(numeric_genids) if numeric_genids else None
 
-    last_report_exists = current_genid is not None and _load_gen_report(run_dir, current_genid) is not None
+    last_report_exists = current_genid is not None and _load_gen_report(run_dir, current_genid, domain) is not None
     status = _determine_status(run_dir, run_id, max_generation, current_genid, last_report_exists)
 
     epoch_state = _read_json(run_dir / "research_epoch_state.json") or {
@@ -314,13 +327,13 @@ def build_run_export(run_dir):
         meta = _load_gen_metadata(run_dir, genid) or {}
         parent_genid = meta.get("parent_genid", parent_by_genid.get(genid))
         parent_by_genid[genid] = parent_genid
-        report = _load_gen_report(run_dir, genid)
+        report = _load_gen_report(run_dir, genid, domain)
         node_utility = report.get("node_utility") if report else None
         if node_utility is not None:
             scores.append(node_utility)
         tree.append({"genid": genid, "parent_genid": parent_genid, "score": node_utility})
         if genid != "initial":
-            agent_detail = build_agent_detail(run_dir, run_id, genid, parent_genid, genids)
+            agent_detail = build_agent_detail(run_dir, run_id, genid, parent_genid, genids, domain)
             agents.append({
                 "genid": genid,
                 "parent_genid": parent_genid,
@@ -333,13 +346,13 @@ def build_run_export(run_dir):
 
     run_export = {
         "run_id": run_id,
-        "domain": "research",
+        "domain": domain,
         "status": status,
         "current_genid": current_genid,
         "max_generation": max_generation,
         "max_score": max(scores) if scores else None,
         "avg_score": (sum(scores) / len(scores)) if scores else None,
-        "errors": _find_errors(run_dir, [g for g in genids if isinstance(g, int)]),
+        "errors": _find_errors(run_dir, [g for g in genids if isinstance(g, int)], domain),
         "pending_pr": _find_pending_pr(run_dir, genids),
         "epoch": {
             "incumbent_genid": epoch_state.get("incumbent_genid"),
