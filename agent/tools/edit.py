@@ -128,6 +128,8 @@ def tool_function(command, path, file_text=None, view_range=None, old_str=None, 
         elif command == "str_replace":
             if not old_str:
                 raise ValueError("Parameter `old_str` is required for str_replace command")
+            if new_str is None:
+                raise ValueError("Parameter `new_str` is required for str_replace command")
             return replace_text(path_obj, old_str, new_str)
             
         elif command == "insert":
@@ -203,39 +205,68 @@ def view_file(path: Path, view_range=None) -> str:
     
     return format_output(content, str(path))
 
+def _raw_index_for_expanded(raw: str, expanded_idx: int) -> int:
+    """Map an index in a tab-expanded rendering back to a raw-string index.
+
+    `format_output` expands tabs before showing a file, so the `old_str` the
+    model copies from that display may be an expanded, spaces-only string even
+    when the file on disk still contains tabs. Match against the expanded text
+    but translate the match span back to raw indices, so unrelated tabs in the
+    file are not silently rewritten as spaces (the old implementation expanded
+    the whole file and wrote it back, corrupting Makefiles, Go files, etc.).
+    """
+    col = 0
+    for raw_idx, ch in enumerate(raw):
+        if col >= expanded_idx:
+            return raw_idx
+        if ch == "\t":
+            col += 8 - (col % 8)
+        else:
+            col += 1
+    return len(raw)
+
+
 def replace_text(path: Path, old_str: str, new_str: str) -> str:
     """Replace text in file."""
-    content = read_file(path).expandtabs()
-    old_str = old_str.expandtabs()
-    new_str = new_str.expandtabs() if new_str is not None else ""
-    
+    raw_content = read_file(path)
+    raw_old = old_str
+    new_str_raw = new_str if new_str is not None else ""
+
+    # Match against the same tab-expanded rendering the model was shown.
+    expanded_content = raw_content.expandtabs()
+    expanded_old = raw_old.expandtabs()
+
     # Check for exact match and uniqueness
-    occurrences = content.count(old_str)
+    occurrences = expanded_content.count(expanded_old)
     if occurrences == 0:
         raise ValueError(f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {path}")
     if occurrences > 1:
-        lines = [idx + 1 for idx, line in enumerate(content.split("\n")) if old_str in line]
+        lines = [idx + 1 for idx, line in enumerate(expanded_content.split("\n")) if expanded_old in line]
         raise ValueError(f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique")
-    
+
+    expanded_start = expanded_content.find(expanded_old)
+    expanded_end = expanded_start + len(expanded_old)
+    raw_start = _raw_index_for_expanded(raw_content, expanded_start)
+    raw_end = _raw_index_for_expanded(raw_content, expanded_end)
+
     # Save to history and perform replacement
-    file_history.add(str(path), content)
-    new_content = content.replace(old_str, new_str)
+    file_history.add(str(path), raw_content)
+    new_content = raw_content[:raw_start] + new_str_raw + raw_content[raw_end:]
     write_file(path, new_content)
-    
+
     # Create snippet of edited section
-    replacement_line = content.split(old_str)[0].count("\n")
+    replacement_line = raw_content[:raw_start].count("\n")
     start_line = max(0, replacement_line - 4)
-    end_line = replacement_line + 4 + new_str.count("\n")
+    end_line = replacement_line + 4 + new_str_raw.count("\n")
     snippet = "\n".join(new_content.split("\n")[start_line:end_line + 1])
-    
+
     return (f"The file {path} has been edited. " + 
             format_output(snippet, f"a snippet of {path}", start_line + 1) +
             "Review the changes and make sure they are as expected. Edit the file again if necessary.")
 
 def insert_text(path: Path, insert_line: int, new_str: str) -> str:
     """Insert text after specific line number."""
-    content = read_file(path).expandtabs()
-    new_str = new_str.expandtabs()
+    content = read_file(path)
     lines = content.split("\n")
     n_lines = len(lines)
     
