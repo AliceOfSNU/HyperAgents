@@ -32,7 +32,10 @@ class MetaAgent(AgentSystem):
             "itself (e.g. "
             "agent/llm_withtools.py's chat_with_agent, which every agent in this repo, "
             "including you right now, runs through) is just as much yours to inspect "
-            "and improve as task_agent.py is."
+            "and improve as the task-facing agent code (task_agent.py, "
+            "swe_task_agent.py) is.\n\n"
+            f"`{repo_path}/memory.md` is yours too -- currently empty, a blank slate. "
+            "Whether and how to use it is entirely your call."
         )
 
         parent_note = self._parent_empty_diff_note(eval_path, parent_genid)
