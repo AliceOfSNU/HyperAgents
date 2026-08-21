@@ -33,6 +33,7 @@ from utils.domain_utils import (
     get_domain_stagedeval_samples,
 )
 from utils.gl_utils import (
+    OWN_HARNESS_DOMAINS,
     apply_diffs_container,
     get_patch_files,
     get_node_metadata_key,
@@ -960,7 +961,7 @@ def generate_loop(
             archive = update_and_save_archive(output_dir, [], new_node=0)
             metadata = generate(
                 docker_client,
-                [d for d in domains if d not in ("polyglot", "research")],
+                [d for d in domains if d not in OWN_HARNESS_DOMAINS],
                 output_dir,
                 run_id,
                 current_genid=0,
@@ -1055,7 +1056,7 @@ def generate_loop(
         for current_genid in range(start_genid, max_generation + 1):
             metadata = generate(
                 docker_client,
-                [d for d in domains if d not in ("polyglot", "research")],
+                [d for d in domains if d not in OWN_HARNESS_DOMAINS],
                 output_dir,
                 run_id,
                 current_genid,

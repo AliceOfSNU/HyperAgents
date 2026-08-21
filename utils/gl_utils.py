@@ -23,6 +23,24 @@ from utils.domain_utils import (
 )
 from utils.git_utils import commit_repo, get_git_commit_hash
 
+# Domains with their own dedicated harness (domains/<name>/harness.py),
+# entered via generate_loop.py's own explicit `if "<name>" in domains:`
+# calls rather than the generic per-domain CSV harness (domains/harness.py,
+# whose own --domain argparse choices never included these three either).
+# Two call sites need to exclude them:
+#   1. setup_initial_gen's copy_eval step (see its own comment) -- their
+#      gen_initial evaluation never reads that copied "cached initial
+#      baseline eval" folder.
+#   2. generate_loop.py's own two `generate(...)` call sites -- passing them
+#      through unfiltered makes generate()'s internal staged/full-eval loop
+#      try to run domains/harness.py --domain <name>, which doesn't know
+#      about them, crash, and force metadata["run_eval"] = False -- silently
+#      skipping that generation's *real* evaluation while looking like it
+#      succeeded. Confirmed live: exactly what happened to deep_swe's gen_1
+#      after PR #18 merged -- research/polyglot were already excluded here,
+#      deep_swe was not, until this set unified both call sites.
+OWN_HARNESS_DOMAINS = {"research", "polyglot", "deep_swe"}
+
 
 def is_starting_node(genid):
     # Starting nodes are initial or 0
@@ -229,6 +247,18 @@ def setup_initial_gen(
     # Make a copy of the eval folder
     if copy_eval:
         for domain, subset in zip(domains, subsets):
+            if domain in OWN_HARNESS_DOMAINS:
+                # research/polyglot/deep_swe each run their own dedicated
+                # harness (domains/<name>/harness.py), which writes its own
+                # gen_initial/<name>_eval output directly -- it never reads
+                # this copied "cached initial baseline" folder at all. This
+                # copytree step is for the generic per-domain CSV harness
+                # only. Confirmed live: research/polyglot only ever avoided
+                # crashing here because a leftover outputs/initial_<domain>_0/
+                # placeholder from an earlier run happened to already exist;
+                # deep_swe (freshly added) had no such placeholder and hit
+                # FileNotFoundError on this exact copytree.
+                continue
             splits = get_domain_splits(domain, eval_test=eval_test)
             # Eval on training set
             gen_output_dir = os.path.join(output_dir, f"gen_initial/{domain}_eval")
