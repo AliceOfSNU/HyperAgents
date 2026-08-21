@@ -41,14 +41,20 @@ def main():
     write_meta(repo_dir, args.task_id, "running")
 
     prev_cwd = os.getcwd()
+    prediction = "failed"
     os.chdir(repo_dir)
     try:
         agentic_system = SweTaskAgent(model=args.model, chat_history_file=chat_history_file)
         prediction, _ = agentic_system.forward({"instructions": instruction})
+    except Exception as e:
+        # Keep the harness-side wrapper running even if the agent loop raises
+        # unexpectedly; SweTaskAgent already commits uncommitted work in its
+        # own finally block, so this is purely about finalizing meta and
+        # giving Pier a clean process exit.
+        print(f"swe_task_agent failed: {e}", flush=True)
     finally:
         os.chdir(prev_cwd)
-
-    write_meta(repo_dir, args.task_id, "completed" if prediction == "done" else "failed")
+        write_meta(repo_dir, args.task_id, "completed" if prediction == "done" else "failed")
 
 
 if __name__ == "__main__":

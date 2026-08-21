@@ -203,39 +203,107 @@ def view_file(path: Path, view_range=None) -> str:
     
     return format_output(content, str(path))
 
-def replace_text(path: Path, old_str: str, new_str: str) -> str:
-    """Replace text in file."""
-    content = read_file(path).expandtabs()
-    old_str = old_str.expandtabs()
-    new_str = new_str.expandtabs() if new_str is not None else ""
-    
-    # Check for exact match and uniqueness
-    occurrences = content.count(old_str)
-    if occurrences == 0:
+def _expanded_spans(raw: str, expanded_old: str):
+    """Yield raw-string spans whose tab-expanded form matches `expanded_old`.
+
+    The editor's `view` command displays tabs expanded to spaces (Python's
+    default 8-column tab stops), so callers naturally copy that expanded text
+    as `old_str`.  Matching against `raw.expandtabs()` makes that work while
+    letting us replace the corresponding span in the *original* tab-preserving
+    string -- the file on disk is never globally re-tabbed/untabbed.
+    """
+    if not expanded_old:
+        return
+
+    # Quick rejection using Python's own expansion.
+    if expanded_old not in raw.expandtabs():
+        return
+
+    # Precompute, for every expanded-column position, the raw-string index
+    # that produced it.  Python's expandtabs() resets the column count after
+    # every newline; reproduce that exactly so old_str copied from a multi-line
+    # view still maps back to the right raw span.
+    exp_chars = []
+    exp_to_raw = []
+    col = 0
+    for raw_idx, ch in enumerate(raw):
+        if ch == "\t":
+            width = 8 - (col % 8)
+            exp_chars.extend([" "] * width)
+            exp_to_raw.extend([raw_idx] * width)
+            col += width
+        else:
+            exp_chars.append(ch)
+            exp_to_raw.append(raw_idx)
+            col = 0 if ch == "\n" else col + 1
+    expanded = "".join(exp_chars)
+    start = expanded.find(expanded_old)
+
+    while start != -1:
+        end = start + len(expanded_old)
+        raw_start = exp_to_raw[start]
+        raw_end = exp_to_raw[end - 1] + 1 if end > 0 else raw_start
+        yield raw_start, raw_end
+        start = expanded.find(expanded_old, start + 1)
+
+
+def _find_unique_span(path: Path, raw: str, old_str: str):
+    """Return the unique (start, end) span for old_str in raw.
+
+    Tries a verbatim match first (which is always tab-exact).  If that fails,
+    falls back to matching the tab-expanded form of `old_str` against the
+    tab-expanded file, so strings copied from `view` output still work without
+    rewriting any other part of the file.
+    """
+    exact_count = raw.count(old_str)
+    if exact_count == 1:
+        start = raw.find(old_str)
+        return start, start + len(old_str)
+    if exact_count > 1:
+        lines = [idx + 1 for idx, line in enumerate(raw.split("\n")) if old_str in line]
+        raise ValueError(
+            f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique"
+        )
+
+    spans = list(_expanded_spans(raw, old_str.expandtabs()))
+    if not spans:
         raise ValueError(f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {path}")
-    if occurrences > 1:
-        lines = [idx + 1 for idx, line in enumerate(content.split("\n")) if old_str in line]
-        raise ValueError(f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique")
-    
-    # Save to history and perform replacement
+    if len(spans) > 1:
+        lines = [raw.count("\n", 0, start) + 1 for start, _ in spans]
+        raise ValueError(
+            f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique"
+        )
+    return spans[0]
+
+
+def replace_text(path: Path, old_str: str, new_str: str) -> str:
+    """Replace text in file without disturbing tabs outside the match."""
+    content = read_file(path)
+    new_str = new_str if new_str is not None else ""
+
+    start, end = _find_unique_span(path, content, old_str)
+
+    # Save to history and perform replacement on the original tab-preserving
+    # content.  The old implementation called expandtabs() on the whole file
+    # before writing, which converted every tab in the file to spaces --
+    # corrupting Go/Makefile sources and any tab-sensitive literal text.
     file_history.add(str(path), content)
-    new_content = content.replace(old_str, new_str)
+    new_content = content[:start] + new_str + content[end:]
     write_file(path, new_content)
-    
+
     # Create snippet of edited section
-    replacement_line = content.split(old_str)[0].count("\n")
+    replacement_line = new_content.count("\n", 0, start)
     start_line = max(0, replacement_line - 4)
     end_line = replacement_line + 4 + new_str.count("\n")
     snippet = "\n".join(new_content.split("\n")[start_line:end_line + 1])
-    
-    return (f"The file {path} has been edited. " + 
+
+    return (f"The file {path} has been edited. " +
             format_output(snippet, f"a snippet of {path}", start_line + 1) +
             "Review the changes and make sure they are as expected. Edit the file again if necessary.")
 
 def insert_text(path: Path, insert_line: int, new_str: str) -> str:
     """Insert text after specific line number."""
-    content = read_file(path).expandtabs()
-    new_str = new_str.expandtabs()
+    content = read_file(path)
     lines = content.split("\n")
     n_lines = len(lines)
     
