@@ -20,6 +20,9 @@ def get_domain_score_key(domain):
     # Research domain (ResearchClawBench)
     elif domain == "research":
         return "node_utility"
+    # deep-swe domain
+    elif domain == "deep_swe":
+        return "node_utility"
 
 
 def get_domain_splits(domain, eval_test=False):
@@ -46,6 +49,9 @@ def get_domain_splits(domain, eval_test=False):
         return ["train"]
     # Research domain (ResearchClawBench) -- own file-based subset split, no val/test
     elif domain == "research":
+        return ["train"]
+    # deep-swe domain -- own file-based subset (domains/deep_swe/subsets/), no val/test
+    elif domain == "deep_swe":
         return ["train"]
 
 
@@ -74,6 +80,9 @@ def can_domain_ensembled(domain):
     # Research domain (ResearchClawBench) -- combined real+evaluator score, not ensembleable
     elif domain == "research":
         return False
+    # deep-swe domain -- real test-execution reward per task, not ensembleable
+    elif domain == "deep_swe":
+        return False
 
 
 def get_domain_eval_subset(domain):
@@ -101,6 +110,9 @@ def get_domain_eval_subset(domain):
     # Research domain -- own file-based subset (domains/research/subsets/), unused here
     elif domain == "research":
         return ""
+    # deep-swe domain -- own file-based subset (domains/deep_swe/subsets/), unused here
+    elif domain == "deep_swe":
+        return ""
 
 
 def get_domain_test_subset(domain):
@@ -127,6 +139,9 @@ def get_domain_test_subset(domain):
         return ""
     # Research domain -- own file-based subset, unused here
     elif domain == "research":
+        return ""
+    # deep-swe domain -- own file-based subset, unused here
+    elif domain == "deep_swe":
         return ""
 
 
@@ -156,6 +171,10 @@ def get_domain_stagedeval_samples(domain):
     # handles this internally; unused by the generic staged-eval path)
     elif domain == "research":
         return 10
+    # deep-swe domain -- handled internally by domains/deep_swe/harness.py;
+    # unused by the generic staged-eval path
+    elif domain == "deep_swe":
+        return 8
 
 
 def get_domain_stagedeval_frac(domain):
@@ -188,6 +207,9 @@ def get_domain_stagedeval_frac(domain):
     # Research domain -- unused, handled internally by domains/research/harness.py
     elif domain == "research":
         return 10/40
+    # deep-swe domain -- unused, handled internally by domains/deep_swe/harness.py
+    elif domain == "deep_swe":
+        return 1.0
 
 
 def has_domain_val_subset(domain):
@@ -214,4 +236,7 @@ def has_domain_val_subset(domain):
         return False
     # Research domain
     elif domain == "research":
+        return False
+    # deep-swe domain
+    elif domain == "deep_swe":
         return False

@@ -140,6 +140,16 @@ def run_harness_research(root_dir, output_dir, genid):
     return _run_harness_research(root_dir, output_dir, genid)
 
 
+def run_harness_deep_swe(root_dir, output_dir, genid):
+    # Own harness for the same reason as research/polyglot -- each task runs
+    # inside a Pier-managed container (see domains/deep_swe/harness.py),
+    # scored by real test execution rather than the generic per-domain CSV
+    # harness.
+    from domains.deep_swe.harness import run_harness_deep_swe as _run_harness_deep_swe
+
+    return _run_harness_deep_swe(root_dir, output_dir, genid)
+
+
 def select_next_parent_container(
     docker_client,
     domains,
@@ -866,7 +876,7 @@ def generate_loop(
     # closing tag rendered as "</｜｜DSML｜｜tool>" instead of "</json>"),
     # which check_for_tool_uses's tag-based parser can never recognize -- a
     # known formatting-reliability issue with this model, not a bug in our code.
-    meta_agent_model = "deepseek/deepseek-v4-pro" if domains in (["polyglot"], ["research"]) else None
+    meta_agent_model = "deepseek/deepseek-v4-pro" if domains in (["polyglot"], ["research"], ["deep_swe"]) else None
     if resume_from:
         output_dir = os.path.normpath(os.path.abspath(resume_from))
         run_id = os.path.basename(output_dir).split("generate_")[-1]
@@ -977,6 +987,9 @@ def generate_loop(
             # Evaluate the agent on research if needed
             if "research" in domains:
                 run_harness_research(root_dir, output_dir, 0)
+            # Evaluate the agent on deep_swe if needed
+            if "deep_swe" in domains:
+                run_harness_deep_swe(root_dir, output_dir, 0)
 
         # Evaluate the entire archive as an ensemble
         eval_ensemble = (
@@ -1087,7 +1100,12 @@ def generate_loop(
             # an empty/unapproved diff for the same reason as polyglot above.
             if "research" in domains and metadata["run_eval"]:
                 run_harness_research(root_dir, output_dir, current_genid)
-    
+
+            # Evaluate the agent on deep_swe if needed -- skipped entirely on
+            # an empty/unapproved diff for the same reason as polyglot above.
+            if "deep_swe" in domains and metadata["run_eval"]:
+                run_harness_deep_swe(root_dir, output_dir, current_genid)
+
             # Evaluate the entire archive as an ensemble
             eval_ensemble = (
                 "ensemble" in optimize_option
@@ -1221,6 +1239,7 @@ if __name__ == "__main__":
             "imo_proof",
             "arc_agi3",
             "research",  # separate Docker-sandboxed harness, see domains/research/harness.py
+            "deep_swe",  # separate Pier-driven harness, see domains/deep_swe/harness.py
         ],
         required=True,
         help="One or more domains to evaluate (must be from the allowed list)",

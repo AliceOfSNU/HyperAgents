@@ -1,0 +1,11 @@
+# Minimal deps for run_swe_task_agent.py inside a deep-swe per-task
+# container. Mirrors requirements-polyglot.txt's own minimal-set rationale:
+# the full requirements.txt pulls in torch/Genesis/balrog/etc. that a coding
+# agent never touches, and installing all of that in every ephemeral
+# container is pure waste. Keep in sync with requirements.txt's pins for:
+# litellm, backoff, requests, dotenv, GitPython.
+litellm==1.74.9
+backoff==2.2.1
+requests==2.32.4
+dotenv==0.9.9
+GitPython==3.1.44

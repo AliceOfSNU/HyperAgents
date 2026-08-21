@@ -337,6 +337,16 @@ def setup_initial_gen(
         # harness.py's own import of it is unaffected for the same reason as
         # the entry above.
         "research/claude_scorer.py",
+        # Same reasoning as research/subsets/scoring_subset.json above --
+        # even though domains/ changes never persist (reset_paths_to_commit
+        # strips them after every generation), the meta-agent could still
+        # *read* the 8 scored task IDs here and hardcode a per-task-ID
+        # dispatch into swe_task_agent.py (which IS evolvable) the exact
+        # same way PR #13 did for the research domain. Host-side
+        # domains/deep_swe/harness.py is unaffected: it reads
+        # domains/deep_swe/config.py's SCORING_SUBSET_PATH relative to the
+        # live project directory, never from this per-run copy.
+        "deep_swe/subsets/scoring_subset.json",
     }
     excluded_dirs_domains.update({  # exclude domains that are not in the current run
         f"{folder_name}"
