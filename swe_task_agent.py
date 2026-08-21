@@ -21,19 +21,28 @@ class SweTaskAgent(AgentSystem):
     def forward(self, inputs):
         instruction = inputs["instructions"]
         initial_head = self._current_head()
-        new_msg_history, trajectory = chat_with_agent(
-            instruction,
-            model=self.model,
-            msg_history=[],
-            logging=self.log,
-            tools_available=['bash', 'editor'],
-            multiple_tool_calls=True,
-            max_tool_calls=100,
-            plan_act_observe=True,
-        )
-        self.save_trajectory(trajectory)
+        new_msg_history = []
+        trajectory = []
+        try:
+            new_msg_history, trajectory = chat_with_agent(
+                instruction,
+                model=self.model,
+                msg_history=[],
+                logging=self.log,
+                tools_available=['bash', 'editor'],
+                multiple_tool_calls=True,
+                max_tool_calls=100,
+                plan_act_observe=True,
+            )
+        except Exception as e:
+            # A mid-run LLM/tool exception shouldn't throw away edits already
+            # on disk: still auto-commit below and let the verifier grade
+            # whatever HEAD contains, exactly like the normal early-stop path.
+            self.log(f"chat_with_agent raised: {e}")
+        finally:
+            self._ensure_committed()
+            self.save_trajectory(trajectory)
 
-        self._ensure_committed()
         # "Done" means HEAD moved from where it started -- not just "some
         # commit exists", since the base image's own git history already has
         # commits (the real repo cloned and pinned at base_commit) before the
