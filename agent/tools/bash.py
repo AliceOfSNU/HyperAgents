@@ -1,5 +1,7 @@
 import asyncio
 import os
+import signal
+import uuid
 
 def tool_info():
     return {
@@ -8,7 +10,7 @@ def tool_info():
 * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
 * You don't have access to the internet via this tool.
 * You do have access to a mirror of common linux and python packages via apt and pip.
-* State is persistent across command calls and discussions with the user.
+* Each command runs in a fresh bash shell started in the agent's current working directory. Shell state (cwd, env vars, background jobs) does NOT persist between calls; chain commands with `&&` or `;` when later commands depend on earlier ones.
 * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
 * Please avoid commands that may produce a very large amount of output.
 * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.""",
@@ -30,15 +32,15 @@ class BashSession:
         self._started = False
         self._process = None
         self._timed_out = False
-        self._timeout = 120.0  # seconds
-        self._sentinel = "<<exit>>"
-        self._output_delay = 0.2  # seconds
+        self._timeout = 300.0  # seconds
+        self._sentinel = f"__HA_BASH_EXIT_{uuid.uuid4().hex}__"
+        self._output_delay = 0.1  # seconds
 
     async def start(self):
         if self._started:
             return
         self._process = await asyncio.create_subprocess_shell(
-            "/bin/bash -i",
+            "/bin/bash --noprofile --norc",
             preexec_fn=os.setsid,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -47,13 +49,30 @@ class BashSession:
         )
         self._started = True
 
-    def stop(self):
+    async def stop(self):
         if not self._started:
             return
         if self._process.returncode is None:
-            self._process.terminate()
+            self._kill()
+        if self._process is not None and self._process.returncode is None:
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
         self._process = None
         self._started = False
+
+    def _kill(self):
+        """Kill the whole bash process group so background children don't leak."""
+        if self._process is None or self._process.returncode is not None:
+            return
+        try:
+            os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                self._process.kill()
+            except Exception:
+                pass
 
     async def run(self, command):
         if not self._started:
@@ -65,9 +84,15 @@ class BashSession:
                 f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
             )
         
-        # Send command
+        # Send command. It must end with a newline before we append the
+        # sentinel echo; otherwise a heredoc terminator (or any final token
+        # that must sit at a line boundary) gets joined to "; echo ..." and
+        # bash waits forever for more heredoc input.
+        command_bytes = command.encode()
+        if not command_bytes.endswith(b"\n"):
+            command_bytes += b"\n"
         self._process.stdin.write(
-            command.encode() + f"; echo '{self._sentinel}'\n".encode()
+            command_bytes + f"echo '{self._sentinel}'\n".encode()
         )
         await self._process.stdin.drain()
 
@@ -79,6 +104,7 @@ class BashSession:
             while True:
                 if asyncio.get_event_loop().time() - start_time > self._timeout:
                     self._timed_out = True
+                    self._kill()
                     raise ValueError(
                         f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
                     )
@@ -106,22 +132,27 @@ class BashSession:
             raise ValueError(str(e))
 
 def filter_error(error):
-    # Filter out errors that we do not want to see
+    # Interactive bash prints an ioctl warning on non-tty stderr; drop that
+    # line and the prompt/sentinel noise that follows it, keep everything else.
+    if not error:
+        return ""
     filtered_lines = []
-    i = 0
     error_lines = error.splitlines()
+    i = 0
     while i < len(error_lines):
         line = error_lines[i]
 
-        # Skip the next lines if ioctl error, add relevant lines
         if "Inappropriate ioctl for device" in line:
-            i += 3
-            if '<<exit>>' in error_lines[i]:
+            i += 1
+            # Skip blank lines immediately after the ioctl warning.
+            while i < len(error_lines) and error_lines[i].strip() == "":
                 i += 1
-            while i < len(error_lines) - 1:
+            while i < len(error_lines):
+                if error_lines[i].startswith("__HA_BASH_EXIT_"):
+                    i += 1
+                    continue
                 filtered_lines.append(error_lines[i])
                 i += 1
-            i += 1
             continue
 
         filtered_lines.append(line)
@@ -129,13 +160,10 @@ def filter_error(error):
     return '\n'.join(filtered_lines).strip()
 
 async def tool_function_call(command):
-    """Execute a command in the bash shell."""
+    """Execute a command in a fresh bash shell."""
+    bash_session = BashSession()
     try:
-        bash_session = BashSession()
-
-        if not bash_session._started:
-            await bash_session.start()
-
+        await bash_session.start()
         output, error = await bash_session.run(command)
         error = filter_error(error)
         result = ""
@@ -146,6 +174,8 @@ async def tool_function_call(command):
         return result.strip()
     except Exception as e:
         return f"Error: {str(e)}"
+    finally:
+        await bash_session.stop()
 
 def tool_function(command):
     return asyncio.run(tool_function_call(command))

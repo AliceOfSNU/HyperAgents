@@ -16,10 +16,14 @@ def load_tools(logging=print, names=[]):
 
             # Check if module has required functions
             if hasattr(module, 'tool_info') and hasattr(module, 'tool_function'):
-                tool_name = tool_file.stem
-                if names and (names == 'all' or tool_name in names):
+                info = module.tool_info()
+                tool_name = info.get("name", tool_file.stem)
+                # Empty names list means "no tools"; 'all' means every tool;
+                # otherwise filter by the tool's advertised name (not the
+                # filename -- e.g. agent/tools/edit.py advertises "editor").
+                if names == 'all' or (names and tool_name in names):
                     tools.append({
-                        'info': module.tool_info(),
+                        'info': info,
                         'function': module.tool_function,
                         'name': tool_name,
                     })
