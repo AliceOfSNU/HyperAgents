@@ -19,27 +19,49 @@ class SweTaskAgent(AgentSystem):
     real defense, not an afterthought -- see domains/deep_swe/config.py)."""
 
     def forward(self, inputs):
-        instruction = inputs["instructions"]
+        instruction = self._build_instruction(inputs["instructions"])
         initial_head = self._current_head()
-        new_msg_history, trajectory = chat_with_agent(
-            instruction,
-            model=self.model,
-            msg_history=[],
-            logging=self.log,
-            tools_available=['bash', 'editor'],
-            multiple_tool_calls=True,
-            max_tool_calls=100,
-            plan_act_observe=True,
-        )
-        self.save_trajectory(trajectory)
-
-        self._ensure_committed()
+        try:
+            new_msg_history, trajectory = chat_with_agent(
+                instruction,
+                model=self.model,
+                msg_history=[],
+                logging=self.log,
+                tools_available=['bash', 'editor'],
+                multiple_tool_calls=True,
+                max_tool_calls=100,
+                plan_act_observe=True,
+            )
+            self.save_trajectory(trajectory)
+        except Exception as e:
+            # A mid-loop API/tool failure must not throw away edits that were
+            # already made on disk before the failure.
+            self.log(f"chat_with_agent failed: {e}")
+            new_msg_history = []
+        finally:
+            self._ensure_committed()
         # "Done" means HEAD moved from where it started -- not just "some
         # commit exists", since the base image's own git history already has
         # commits (the real repo cloned and pinned at base_commit) before the
         # agent does anything at all.
         prediction = "done" if self._current_head() != initial_head else "incomplete: no commit produced"
         return prediction, new_msg_history
+
+    @staticmethod
+    def _build_instruction(task):
+        return (
+            "You are an expert software engineer completing a coding task inside the "
+            "repository at the current working directory.\n"
+            "Work step by step:\n"
+            "1. Explore the repository and identify the relevant source files and tests.\n"
+            "2. Reproduce the current behavior or failure if that helps.\n"
+            "3. Make a minimal, correct change using the editor tool.\n"
+            "4. Run the relevant tests with bash and iterate until they pass.\n"
+            "5. Review your change with `git diff` and `git status`.\n"
+            "6. Commit your final change with a clear commit message. The verifier only "
+            "sees committed changes, so never finish with uncommitted work.\n\n"
+            f"--- TASK ---\n{task}"
+        )
 
     def _current_head(self):
         try:
