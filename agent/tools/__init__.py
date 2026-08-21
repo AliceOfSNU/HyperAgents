@@ -16,10 +16,14 @@ def load_tools(logging=print, names=[]):
 
             # Check if module has required functions
             if hasattr(module, 'tool_info') and hasattr(module, 'tool_function'):
-                tool_name = tool_file.stem
+                tool_info = module.tool_info()
+                tool_name = tool_info["name"]
+                # Select by the tool's declared name, not its file stem.
+                # These can differ (edit.py declares itself as "editor"), and
+                # callers like swe_task_agent.py ask for the declared name.
                 if names and (names == 'all' or tool_name in names):
                     tools.append({
-                        'info': module.tool_info(),
+                        'info': tool_info,
                         'function': module.tool_function,
                         'name': tool_name,
                     })

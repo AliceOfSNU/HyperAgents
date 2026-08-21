@@ -1,5 +1,11 @@
-import asyncio
 import os
+import select
+import signal
+import subprocess
+import threading
+import time
+import uuid
+
 
 def tool_info():
     return {
@@ -24,131 +30,191 @@ def tool_info():
         }
     }
 
-class BashSession:
-    """A session of a bash shell."""
-    def __init__(self):
-        self._started = False
-        self._process = None
-        self._timed_out = False
-        self._timeout = 120.0  # seconds
-        self._sentinel = "<<exit>>"
-        self._output_delay = 0.2  # seconds
 
-    async def start(self):
-        if self._started:
+class BashSession:
+    """A persistent, non-interactive bash shell shared across tool calls.
+
+    The previous implementation created a fresh `bash -i` process for every
+    tool call. That looked stateful but wasn't: `cd`, exported variables, and
+    shell settings never survived to the next call, directly contradicting the
+    tool description. A single long-lived `bash --norc --noprofile` process
+    gives real persistence of working directory, environment variables, and
+    background processes, and avoids interactive-shell prompt/ioctl noise on
+    stderr.
+    """
+
+    def __init__(self):
+        self._process = None
+        self._timeout = 120.0  # seconds
+
+    def start(self):
+        if self._process is not None and self._process.poll() is None:
             return
-        self._process = await asyncio.create_subprocess_shell(
-            "/bin/bash -i",
+        self._process = subprocess.Popen(
+            ["/bin/bash", "--norc", "--noprofile"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=os.environ.copy(),
             preexec_fn=os.setsid,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy()  # Ensures inheritance of the current environment
         )
-        self._started = True
 
     def stop(self):
-        if not self._started:
+        if self._process is None:
             return
-        if self._process.returncode is None:
-            self._process.terminate()
+        if self._process.poll() is None:
+            try:
+                os.killpg(self._process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self._process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                self._process.wait(timeout=5)
         self._process = None
-        self._started = False
 
-    async def run(self, command):
-        if not self._started:
-            raise ValueError("Session has not started.")
-        if self._process.returncode is not None:
-            raise ValueError(f"Bash has exited with returncode {self._process.returncode}")
-        if self._timed_out:
-            raise ValueError(
-                f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
-            )
-        
-        # Send command
-        self._process.stdin.write(
-            command.encode() + f"; echo '{self._sentinel}'\n".encode()
-        )
-        await self._process.stdin.drain()
-
-        # Read output until sentinel
+    def _read_available(self, stream):
+        """Read whatever `stream` has buffered right now, without blocking."""
+        import fcntl
+        fd = stream.fileno()
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        chunks = []
         try:
-            output = ''
-            start_time = asyncio.get_event_loop().time()
-            
             while True:
-                if asyncio.get_event_loop().time() - start_time > self._timeout:
-                    self._timed_out = True
-                    raise ValueError(
-                        f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
-                    )
-                
-                await asyncio.sleep(self._output_delay)
-                # Read from the internal buffer
-                stdout_data = self._process.stdout._buffer.decode(errors='ignore')
-                stderr_data = self._process.stderr._buffer.decode(errors='ignore')
-                
-                if self._sentinel in stdout_data:
-                    output = stdout_data[: stdout_data.index(self._sentinel)]
+                try:
+                    data = os.read(fd, 65536)
+                except BlockingIOError:
                     break
+                if not data:
+                    break
+                chunks.append(data.decode(errors="ignore"))
+        finally:
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+        return "".join(chunks)
 
-            # Clear buffers
-            self._process.stdout._buffer.clear()
-            self._process.stderr._buffer.clear()
+    def run(self, command):
+        if self._process is None or self._process.poll() is not None:
+            raise ValueError("Bash has exited and must be restarted.")
 
-            output = output.strip()
-            error = stderr_data.strip()
+        # A unique sentinel per command means legitimate command output that
+        # contains the marker string can no longer truncate the result. The
+        # old fixed `<<exit>>` sentinel did exactly that.
+        sentinel = f"__HYPERAGENTS_BASH_SENTINEL_{uuid.uuid4().hex}__"
+        try:
+            # Write the sentinel echo as its own command line, never appended
+            # to the user's last line with `;`. If the user command ends with
+            # a heredoc delimiter (e.g. `cat > f <<'EOF'\n...\nEOF`), a `;`
+            # would turn the delimiter line into `EOF; echo sentinel`, so the
+            # heredoc would never terminate and every such call would hang
+            # until timeout.
+            self._process.stdin.write(f"{command}\necho '{sentinel}'\n")
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            self.stop()
+            raise ValueError(f"Bash has exited and must be restarted: {e}")
 
-            return output, error
+        stdout_data = ""
+        stderr_data = ""
+        start_time = time.time()
 
-        except Exception as e:
-            self._timed_out = True
-            raise ValueError(str(e))
+        while True:
+            if time.time() - start_time > self._timeout:
+                self.stop()
+                raise ValueError(
+                    f"Timed out: bash has not returned in {self._timeout} seconds and must be restarted."
+                )
+
+            ready, _, _ = select.select(
+                [self._process.stdout, self._process.stderr], [], [], 0.1
+            )
+
+            for stream in ready:
+                if stream is self._process.stdout:
+                    stdout_data += self._read_available(stream)
+                else:
+                    stderr_data += self._read_available(stream)
+
+            if sentinel in stdout_data:
+                output = stdout_data[: stdout_data.index(sentinel)]
+                # Discard anything that arrived after the sentinel for this
+                # command, so it can't bleed into the next command's result.
+                self._read_available(self._process.stdout)
+                self._read_available(self._process.stderr)
+                return output.strip(), stderr_data.strip()
+
+            if self._process.poll() is not None:
+                self.stop()
+                raise ValueError(
+                    f"Bash exited with return code {self._process.returncode}"
+                )
+
 
 def filter_error(error):
-    # Filter out errors that we do not want to see
+    """Remove the small amount of interactive-shell startup noise that could
+    still appear if bash is ever launched in an environment that forces
+    interactive mode."""
     filtered_lines = []
-    i = 0
-    error_lines = error.splitlines()
-    while i < len(error_lines):
-        line = error_lines[i]
-
-        # Skip the next lines if ioctl error, add relevant lines
+    for line in error.splitlines():
         if "Inappropriate ioctl for device" in line:
-            i += 3
-            if '<<exit>>' in error_lines[i]:
-                i += 1
-            while i < len(error_lines) - 1:
-                filtered_lines.append(error_lines[i])
-                i += 1
-            i += 1
             continue
-
+        if "no job control in this shell" in line:
+            continue
+        if "cannot set terminal process group" in line:
+            continue
         filtered_lines.append(line)
-        i += 1
-    return '\n'.join(filtered_lines).strip()
+    return "\n".join(filtered_lines).strip()
 
-async def tool_function_call(command):
-    """Execute a command in the bash shell."""
-    try:
-        bash_session = BashSession()
 
-        if not bash_session._started:
-            await bash_session.start()
+_BASH_SESSION = None
+_BASH_SESSION_LOCK = threading.Lock()
 
-        output, error = await bash_session.run(command)
-        error = filter_error(error)
-        result = ""
-        if output:
-            result += output
-        if error:
-            result += "\nError:\n" + error
-        return result.strip()
-    except Exception as e:
-        return f"Error: {str(e)}"
+
+def _new_session():
+    session = BashSession()
+    session.start()
+    return session
+
+
+def tool_function_call(command):
+    """Execute a command in the persistent bash shell."""
+    global _BASH_SESSION
+    with _BASH_SESSION_LOCK:
+        try:
+            if _BASH_SESSION is None:
+                _BASH_SESSION = _new_session()
+
+            try:
+                output, error = _BASH_SESSION.run(command)
+            except ValueError:
+                # The persistent shell timed out or exited. Rebuild it and
+                # retry once; if the command is what killed the shell, the
+                # retry will fail and the error is returned below.
+                _BASH_SESSION.stop()
+                _BASH_SESSION = None
+                _BASH_SESSION = _new_session()
+                output, error = _BASH_SESSION.run(command)
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    error = filter_error(error)
+    result = ""
+    if output:
+        result += output
+    if error:
+        result += "\nError:\n" + error
+    return result.strip()
+
 
 def tool_function(command):
-    return asyncio.run(tool_function_call(command))
+    return tool_function_call(command)
+
 
 if __name__ == "__main__":
     # Example usage
@@ -160,6 +226,6 @@ if __name__ == "__main__":
     else:
         # Extract the command from the command-line arguments
         input_command = ' '.join(sys.argv[1:])
-        # Run the tool_function asynchronously
+        # Run the tool_function
         result = tool_function(input_command)
         print(result)
