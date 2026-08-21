@@ -14,14 +14,14 @@ from swe_task_agent import SweTaskAgent
 # staging, there's no data/related_work/report scaffold here, just a repo.
 
 
-def write_meta(repo_dir, task_id, status):
+def write_meta(meta_file, task_id, status):
     meta = {
         "task_id": task_id,
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "status": status,
         "agent_name": "hyperagents_swe_task_agent",
     }
-    with open(Path(repo_dir) / "_hyperagents_meta.json", "w", encoding="utf-8") as f:
+    with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
@@ -37,8 +37,14 @@ def main():
     chat_history_file = str(Path(args.chat_history_file).resolve())
     repo_dir = str(Path(args.repo_dir).resolve())
     instruction = Path(args.instruction_file).read_text(encoding="utf-8")
+    # Keep the status beacon outside the repo checkout. gen_1 wrote it into
+    # /app, where it showed up as an untracked file in every task, got picked
+    # up by `git add -A`/auto-commit, and landed in the graded model.patch as
+    # noise. Next to the chat history is just as accessible to the runner and
+    # keeps the task repo clean for the coding agent.
+    meta_file = Path(chat_history_file).with_name("_hyperagents_meta.json")
 
-    write_meta(repo_dir, args.task_id, "running")
+    write_meta(meta_file, args.task_id, "running")
 
     prev_cwd = os.getcwd()
     os.chdir(repo_dir)
@@ -48,7 +54,7 @@ def main():
     finally:
         os.chdir(prev_cwd)
 
-    write_meta(repo_dir, args.task_id, "completed" if prediction == "done" else "failed")
+    write_meta(meta_file, args.task_id, "completed" if prediction == "done" else "failed")
 
 
 if __name__ == "__main__":
