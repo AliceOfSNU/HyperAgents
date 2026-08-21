@@ -37,6 +37,25 @@ DEEPSWE_TASKS_DIR = DEEPSWE_ROOT / "tasks"
 SUBSETS_DIR = Path(__file__).resolve().parent / "subsets"
 SCORING_SUBSET_PATH = SUBSETS_DIR / "scoring_subset.json"
 
+# A second, disjoint 8-task subset (verified: zero overlap with
+# scoring_subset.json), same "smallest test count" selection logic with a
+# deliberate lean toward language spread (3 go / 3 typescript / 2 python --
+# skipped rust/javascript entirely since their cheapest remaining options
+# were 3-10x pricier than everything else in range). This is deep-swe's
+# "val" split (see utils/domain_utils.py's get_domain_splits) -- generation
+# metadata.json exposes its aggregate score, but the raw eval directory
+# (deep_swe_eval_val/) is stripped from what any meta-agent's own container
+# ever sees, by the SAME existing generate_loop.py exclusion rule
+# (copy_prev_eval_to_container's *_eval_val*/*_eval_test* prune) that
+# research/polyglot's own val/test splits already rely on -- confirmed live
+# by reading that function before wiring this up, not assumed. The point:
+# the meta-agent gets rich diagnostic detail on the visible 8 (what it reads
+# to decide what to fix) but whether a fix survives into the lineage is
+# decided by held-out generalization (select_parent already prefers "val"
+# over "train" scoring when a domain has a val split -- this hooks into
+# that, not a new selection mechanism), not by how well the visible 8 do.
+HELDOUT_SUBSET_PATH = SUBSETS_DIR / "heldout_subset.json"
+
 AGENT_MODEL = "deepseek/deepseek-v4-flash"
 
 # The benchmark's own per-task defaults (task.toml: 5400s/90min agent budget,

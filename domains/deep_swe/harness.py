@@ -30,6 +30,7 @@ from .config import (
     AGENT_TIMEOUT_MULTIPLIER,
     BASELINE_FILES,
     DEEPSWE_TASKS_DIR,
+    HELDOUT_SUBSET_PATH,
     SCORING_SUBSET_PATH,
     VERIFIER_TIMEOUT_MULTIPLIER,
 )
@@ -41,7 +42,9 @@ from .config import (
 # as domains/research/harness.py's own load_dotenv() call.
 load_dotenv()
 
-N_CONCURRENT = 4
+N_CONCURRENT = 8  # Confirmed live headroom for this: 32 logical CPUs, load
+# average ~2.9, a real n=4 batch (one Rust compile, one TS build) used ~5.2GB
+# of ~19GB available and a few hundred percent CPU out of 3200% available.
 
 
 def _log(message):
@@ -145,16 +148,23 @@ def _load_trial_results(jobs_dir, job_name):
     return records
 
 
-def compute_node_utility(root_dir, output_dir, genid, model=AGENT_MODEL, max_workers=N_CONCURRENT):
-    """Run the candidate swe_task_agent.py (as of `genid`) on the fixed
-    scoring subset via a single `pier run` job, score with real test
-    execution, and return (node_utility, per_task_records)."""
-    scoring_subset = json.loads(SCORING_SUBSET_PATH.read_text(encoding="utf-8"))
+def compute_node_utility(root_dir, output_dir, genid, model=AGENT_MODEL, max_workers=N_CONCURRENT,
+                          subset_path=SCORING_SUBSET_PATH, eval_dirname="deep_swe_eval"):
+    """Run the candidate swe_task_agent.py (as of `genid`) on `subset_path`'s
+    task list via a single `pier run` job, score with real test execution,
+    and return (node_utility, per_task_records).
+
+    subset_path/eval_dirname default to the visible scoring subset; passing
+    HELDOUT_SUBSET_PATH/"deep_swe_eval_val" runs the exact same logic
+    against the held-out set instead -- see config.py's own docstring for
+    why "_eval_val" specifically (it's what get_domain_splits' "val" split
+    and generate_loop.py's own container-exclusion rule both key off)."""
+    scoring_subset = json.loads(subset_path.read_text(encoding="utf-8"))
 
     with tempfile.TemporaryDirectory(prefix=f"deep_swe_gen{genid}_") as dest_dir:
         _reconstruct_code(root_dir, output_dir, genid, dest_dir)
 
-        jobs_dir = Path(output_dir) / f"gen_{genid}" / "deep_swe_eval"
+        jobs_dir = Path(output_dir) / f"gen_{genid}" / eval_dirname
         job_name = "eval"
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -195,7 +205,7 @@ def compute_node_utility(root_dir, output_dir, genid, model=AGENT_MODEL, max_wor
         if per_task_records else 0.0
     )
 
-    report_path = Path(output_dir) / f"gen_{genid}" / "deep_swe_eval" / "report.json"
+    report_path = Path(output_dir) / f"gen_{genid}" / eval_dirname / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps({
         "node_utility": node_utility,
@@ -210,7 +220,24 @@ def run_harness_deep_swe(root_dir, output_dir, genid):
     approved and non-empty (see generate_loop.py's own run_eval gate) --
     otherwise the code is byte-identical to its already-scored parent and
     re-scoring would be pure waste, same reasoning as domains/research/
-    harness.py's own run_harness_research."""
+    harness.py's own run_harness_research.
+
+    Runs both the visible scoring subset (what the meta-agent can read in
+    full detail -- trajectories, trial logs, everything) and the disjoint
+    held-out subset (aggregate score only -- see config.py's docstring for
+    why and how the raw eval directory never reaches the meta-agent's own
+    container). deep_swe_node_utility keeps its existing name/meaning
+    (visible-subset score, unchanged for any code that already reads it);
+    deep_swe_val_node_utility is new. select_parent already prefers the val
+    score once get_domain_splits reports a "val" split for a domain (see
+    utils/gl_utils.py) -- no separate gating logic needed here."""
     node_utility, _ = compute_node_utility(root_dir, output_dir, genid)
-    update_node_metadata(output_dir, genid, {"deep_swe_node_utility": node_utility})
+    heldout_utility, _ = compute_node_utility(
+        root_dir, output_dir, genid,
+        subset_path=HELDOUT_SUBSET_PATH, eval_dirname="deep_swe_eval_val",
+    )
+    update_node_metadata(output_dir, genid, {
+        "deep_swe_node_utility": node_utility,
+        "deep_swe_val_node_utility": heldout_utility,
+    })
     return node_utility

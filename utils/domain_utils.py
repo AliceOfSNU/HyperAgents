@@ -50,9 +50,17 @@ def get_domain_splits(domain, eval_test=False):
     # Research domain (ResearchClawBench) -- own file-based subset split, no val/test
     elif domain == "research":
         return ["train"]
-    # deep-swe domain -- own file-based subset (domains/deep_swe/subsets/), no val/test
+    # deep-swe domain -- own file-based subsets (domains/deep_swe/subsets/):
+    # scoring_subset.json ("train", the meta-agent's own diagnostic view) and
+    # heldout_subset.json ("val", disjoint, never exposed to the meta-agent's
+    # own container -- see config.py's own docstring for why and how).
+    # select_parent already prefers "val" scoring over "train" when present
+    # (see utils/gl_utils.py), which is exactly the point: whether a
+    # self-modification survives into the lineage is decided by
+    # generalization to unseen tasks, not by the visible subset it was
+    # diagnosed and fixed against.
     elif domain == "deep_swe":
-        return ["train"]
+        return ["train", "val"]
 
 
 def can_domain_ensembled(domain):
