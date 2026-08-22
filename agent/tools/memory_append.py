@@ -6,6 +6,8 @@ def tool_info():
         "name": "memory_append",
         "description": """Append one note to memory.jsonl at the repo root -- a persistent, append-only, immutable log that survives across generations the same way any other file you edit does (through your own patch chain). Notes are never rewritten once written (with one narrow exception: memory_link can attach links to the note you *just* created, see below).
 
+One note = one issue. If this generation made several distinct, unrelated changes (a bug fix and a separate prompt tweak, say, or two fixes in different files that aren't part of the same root cause), call this tool once per change rather than folding everything into one note -- splitting is strictly better than a single note summarizing "everything I did this generation". A future generation searching for the bug fix shouldn't have to wade through an unrelated prompt change bundled into the same note, or link to both when it only cares about one. If two changes genuinely share one root cause, they're one issue and belong in one note.
+
 This writes the note immediately -- nothing is held back waiting on a follow-up call. It also searches existing notes using this note's own real content (no separate draft/query needed) and returns candidates in the result. If any are genuinely related, call memory_link with the id this call returns and the candidate ids you want to connect; if none are relevant, there's nothing else to do.
 
 Fields:
