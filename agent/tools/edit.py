@@ -154,8 +154,14 @@ def read_file(path: Path) -> str:
         raise ValueError(f"Failed to read file: {e}")
 
 def write_file(path: Path, content: str):
-    """Write content to file."""
+    """Write content to file, creating any missing parent directories --
+    without this, `create` at a path inside a not-yet-existing directory
+    (e.g. a genuinely new module/subpackage) fails with a raw
+    FileNotFoundError instead of just working, which would silently punish
+    exactly the kind of structural change (new files, new directories) an
+    agent should be free to make."""
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
     except Exception as e:
         raise ValueError(f"Failed to write file: {e}")
