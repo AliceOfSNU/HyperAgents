@@ -5,8 +5,7 @@ already readable inside the meta-agent's own container (report.json,
 metadata.json, and the visible subset's chat_history.json trajectories under
 --evals_folder). Exists so the meta-agent doesn't have to open every prior
 generation's report.json and chat_history.json by hand to see how they
-compare -- see memory: dgm_h_map_elites_parent_selection for the discussion
-this grew out of.
+compare.
 
 Held-out ("val") per-task detail is deliberately never read here -- only the
 already-exposed metadata.json aggregate (deep_swe_val_node_utility). The raw
