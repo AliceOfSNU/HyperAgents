@@ -18,10 +18,16 @@ import json
 import re
 from pathlib import Path
 
-try:
-    from domains.deep_swe.config import TASK_LANGUAGES_PATH
-except Exception:
-    TASK_LANGUAGES_PATH = None
+# Resolved relative to this file's own location rather than imported from
+# domains.deep_swe.config -- that package-relative import only resolves when
+# something puts the repo root on sys.path (e.g. `python -m agent.tools...`
+# from the repo root). run_meta_agent.py itself is launched as a plain
+# script (`python run_meta_agent.py ...` from within /hyperagents/), so the
+# import silently failed in the one context that actually matters, and the
+# try/except below turned that into a silent "all languages show as ?"
+# instead of an error. Same fixed-parents[2] pattern already used by
+# domains/deep_swe/branch_pier_agent.py for the same reason.
+TASK_LANGUAGES_PATH = Path(__file__).resolve().parents[2] / "domains" / "deep_swe" / "subsets" / "task_languages.json"
 
 
 def tool_info():
@@ -174,8 +180,7 @@ def tool_function(evals_folder, genids=None):
         if not base.is_dir():
             return f"Error: '{evals_folder}' is not a directory."
 
-        languages = _load_json(TASK_LANGUAGES_PATH) if TASK_LANGUAGES_PATH else None
-        languages = languages or {}
+        languages = _load_json(TASK_LANGUAGES_PATH) or {}
 
         wanted = {str(g) for g in genids} if genids else None
         gen_dirs = sorted(
