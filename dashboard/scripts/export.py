@@ -203,13 +203,40 @@ def _find_pending_pr(run_dir, genids):
     return None
 
 
+def _normalize_per_task(per_task):
+    """Bridge each domain's raw per-task record to dashboard/web's
+    PerTaskEval shape. Domains report the "real" (verifier-graded) score
+    under different keys -- research already writes real_score; deep_swe
+    writes reward, from actual test execution, no real_score key at all
+    (confirmed live: every deep_swe per_task record has reward/partial/
+    f2p/p2p, not real_score). evaluator_score is absent from EVERY
+    domain's raw output now (no co-evolving evaluator agent anymore --
+    see build_agent_detail's own comment), but dashboard/web's
+    PerTaskEval.evaluator_score is a required (non-optional) field, and
+    ScoreTag does `score.toFixed(2)` whenever score isn't exactly
+    `null` -- so a genuinely *missing* key (JS `undefined`, not `null`)
+    crashes the whole page render, confirmed live against
+    /runs/generate_deep_swe_final/agents/3 ("This page couldn't load").
+    Always including both keys, defaulting to None/null when truly
+    absent, keeps ScoreTag's existing null-check the only code path that
+    ever fires."""
+    normalized = []
+    for t in per_task:
+        real_score = t.get("real_score")
+        if real_score is None:
+            real_score = t.get("reward")
+        normalized.append({**t, "real_score": real_score, "evaluator_score": t.get("evaluator_score")})
+    return normalized
+
+
 def _agent_scores(report):
     if not report:
         return None, None
-    per_task = report.get("per_task", [])
+    per_task = _normalize_per_task(report.get("per_task", []))
     if not per_task:
         return report.get("node_utility"), None
-    real_avg = sum(t.get("real_score", 0) for t in per_task) / len(per_task)
+    scored = [t["real_score"] for t in per_task if t["real_score"] is not None]
+    real_avg = sum(scored) / len(scored) if scored else None
     return report.get("node_utility"), real_avg
 
 
@@ -248,7 +275,7 @@ def build_agent_detail(run_dir, run_id, genid, parent_genid, all_genids, domain)
         # change to stay correct.
         "evaluator_score_avg": None,
         "incumbent_evaluator_genid": None,
-        "per_task": report.get("per_task", []) if report else [],
+        "per_task": _normalize_per_task(report.get("per_task", [])) if report else [],
         "evaluator_anchor_breakdown": None,
         "log_local_path": str(log_local.relative_to(REPO_ROOT)) if log_local.exists() else None,
         "log_drive_link": None,  # filled in by upload.py from its ID cache
