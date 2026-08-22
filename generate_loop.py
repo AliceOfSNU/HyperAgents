@@ -68,11 +68,15 @@ def _meta_agent_env_vars():
     fix domains/research/harness.py's _agent_env_vars already applies to the
     task-agent containers: still visible to a sufficiently
     determined agent via `env`/os.environ inside its own container, same as
-    before, but only these two keys -- not the .env file's full set
-    (SERPER_KEY, JINA_KEY, MINERU_TOKEN, ...) the meta-agent never needed."""
+    before, but only these keys -- not the .env file's full set (SERPER_KEY,
+    JINA_KEY, MINERU_TOKEN, ...) the meta-agent never needed. OPENAI_API_KEY
+    added for memory_search/memory_append's embedding calls
+    (agent/memory_store.py) -- litellm.embedding() needs it even though the
+    meta-agent's own completions go through DeepSeek/Anthropic."""
     keys = {
         "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY"),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
+        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
     }
     missing = [k for k, v in keys.items() if not v]
     if missing:
