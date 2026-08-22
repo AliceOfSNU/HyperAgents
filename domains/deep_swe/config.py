@@ -56,6 +56,17 @@ SCORING_SUBSET_PATH = SUBSETS_DIR / "scoring_subset.json"
 # that, not a new selection mechanism), not by how well the visible 8 do.
 HELDOUT_SUBSET_PATH = SUBSETS_DIR / "heldout_subset.json"
 
+# Static task_id -> language mapping for every task in scoring_subset.json and
+# heldout_subset.json (16 total), read once from each task's own task.toml
+# ([metadata].language) and baked in here rather than looked up live: the
+# meta-agent's own container never has DEEPSWE_TASKS_DIR mounted (only
+# BASELINE_FILES is), so agent/tools/compare_generations.py -- which DOES run
+# inside that container -- needs this available as a plain repo file. No
+# information-hiding concern in exposing it (see this module's own docstring:
+# the whole deep-swe task repo, including solutions, is already publicly
+# fetchable).
+TASK_LANGUAGES_PATH = SUBSETS_DIR / "task_languages.json"
+
 AGENT_MODEL = "deepseek/deepseek-v4-flash"
 
 # The benchmark's own per-task defaults (task.toml: 5400s/90min agent budget,

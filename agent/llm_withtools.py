@@ -130,6 +130,7 @@ def chat_with_agent(
             temperature=temperature,
         )
         tool_calls = info.get("tool_calls") or []
+        usage = info.get("usage")
 
         # A response cut off mid-generation (e.g. hit max_tokens) may carry no
         # tool_calls at all, or an incomplete one -- ask the model to retry
@@ -147,11 +148,16 @@ def chat_with_agent(
             )
             logging(f"Retried after truncation. Output: {repr(response)}")
             tool_calls = info.get("tool_calls") or []
+            usage = info.get("usage")
 
         round_num = 0
         while True:
             round_num += 1
-            round_record = {"round": round_num, "plan": response, "act": [], "observe": []}
+            # usage is the token count for the call that produced THIS
+            # round's plan text (i.e. the previous get_response_fn call, not
+            # the one at the bottom of this loop body -- that one belongs to
+            # the next round).
+            round_record = {"round": round_num, "plan": response, "act": [], "observe": [], "usage": usage}
 
             if not tool_calls:
                 # Terminal round: the model responded with plan text only,
@@ -235,6 +241,7 @@ def chat_with_agent(
                 temperature=temperature,
             )
             tool_calls = info.get("tool_calls") or []
+            usage = info.get("usage")
 
     except Exception as e:
         logging(f"Error: {str(e)}")

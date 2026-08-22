@@ -108,6 +108,28 @@ def get_response_from_llm(
     response_text = message.get("content") or ""
     finish_reason = response['choices'][0].get("finish_reason")  # pyright: ignore
 
+    # Best-effort: not every provider/model reports usage, and reasoning_tokens
+    # specifically is only present for reasoning-capable models. `response`
+    # supports dict-style access (confirmed above), but the nested usage/
+    # details objects may be litellm's own Usage class instead of a plain
+    # dict, so probe both access styles rather than assuming one.
+    def _field(obj, key):
+        if obj is None:
+            return None
+        try:
+            return obj[key]
+        except (TypeError, KeyError, IndexError):
+            return getattr(obj, key, None)
+
+    usage = _field(response, "usage")
+    details = _field(usage, "completion_tokens_details")
+    usage_out = {
+        "prompt_tokens": _field(usage, "prompt_tokens"),
+        "completion_tokens": _field(usage, "completion_tokens"),
+        "total_tokens": _field(usage, "total_tokens"),
+        "reasoning_tokens": _field(details, "reasoning_tokens"),
+    }
+
     assistant_msg = {"role": "assistant", "content": message.get("content")}
     raw_tool_calls = message.get("tool_calls") or []
     parsed_tool_calls = []
@@ -133,7 +155,7 @@ def get_response_from_llm(
         for m in new_msg_history
     ]
 
-    return response_text, new_msg_history, {"tool_calls": parsed_tool_calls, "finish_reason": finish_reason}
+    return response_text, new_msg_history, {"tool_calls": parsed_tool_calls, "finish_reason": finish_reason, "usage": usage_out}
 
 
 if __name__ == "__main__":

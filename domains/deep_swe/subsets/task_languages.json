@@ -1,0 +1,18 @@
+{
+    "helm-unified-manifest-stream": "go",
+    "opa-template-string-reconstruction": "go",
+    "abs-stepped-slices": "go",
+    "go-critic-doc-link-checker": "go",
+    "happy-dom-deterministic-intersectionobserver": "typescript",
+    "boa-hierarchical-evaluation-cancellation": "rust",
+    "textual-richlog-follow-state": "python",
+    "igel-persist-feature-schema": "python",
+    "go-git-worktree-merge-conflicts": "go",
+    "abs-module-cache-flags": "go",
+    "opa-rego-rule-profiling": "go",
+    "quill-shared-toolbar-focus": "typescript",
+    "claude-code-by-agents-recursive-delegation": "typescript",
+    "query-persist-restored-query-state": "typescript",
+    "ipython-session-bundle-replay": "python",
+    "aiomonitor-task-snapshots-diff": "python"
+}
