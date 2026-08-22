@@ -4,21 +4,22 @@ from agent.memory_store import search
 def tool_info():
     return {
         "name": "memory_search",
-        "description": """Find notes in memory.jsonl related to some text, ranked by semantic similarity (embedding cosine similarity -- no LLM call, cheap and fast). Two uses:
+        "description": """Find notes in memory.jsonl related to some text, ranked by semantic similarity (embedding cosine similarity -- no LLM call, cheap and fast). For ad-hoc lookup -- search for whatever you want to know if you already have notes about, instead of reading memory.jsonl in full. (You don't need this before memory_append -- that tool already searches using the note's own real content and returns candidates itself.)
 
-1. Before writing a new note with memory_append, search with a draft of what you're about to write -- the results are candidates for that note's `links` field. Whether any of them are actually related enough to link is your judgment call, not automatic.
-2. Ad-hoc lookup -- search for whatever you want to know if you already have notes about, instead of reading memory.jsonl in full.
-
-Returns each matching note's full content plus its `links`, so you can follow the graph structure (a matched note's own linked notes) by eye without a second search.""",
+Returns each matching note's full content, its own `links` (notes it points to), and its `backlinks` (notes that point to it -- computed fresh each search, not stored) -- so you can follow the graph structure by eye without a second search.""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Text to search for -- a draft note, a question, a topic, anything."},
+                "query": {"type": "string", "description": "Text to search for -- a question, a topic, anything."},
                 "k": {"type": "integer", "description": "Max number of results, default 5."},
             },
             "required": ["query"],
         },
     }
+
+
+def _fmt_links(links):
+    return ", ".join(f"{l.get('id')}({l.get('relation')})" for l in (links or [])) or "none"
 
 
 def tool_function(query, k=5):
@@ -37,7 +38,8 @@ def tool_function(query, k=5):
             f"files={r.get('files') or []} gens={r.get('about_generations')}\n"
             f"  {r['title']}: {r['description']}\n"
             f"  content: {r['content']}\n"
-            f"  links: {r.get('links') or []}"
+            f"  links: {_fmt_links(r.get('links'))}\n"
+            f"  backlinks: {_fmt_links(r.get('backlinks'))}"
         )
     return "\n\n".join(lines)
 

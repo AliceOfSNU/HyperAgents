@@ -28,6 +28,7 @@ domains/polyglot/polyglot_benchmark_metadata.json
 
 # runtime log, not source
 dashboard_loop.log
+docker_network_prune_loop.log
 
 # WSL alternate-data-stream marker left behind by browser downloads
 *:Zone.Identifier
