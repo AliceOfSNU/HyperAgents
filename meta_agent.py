@@ -17,12 +17,9 @@ class MetaAgent(AgentSystem):
             parent_genid (int, optional): The generation id this run's codebase was built from, used to point out where that generation's own self-modification attempt lives under eval_path.
         """
         instruction = (
-            f"Modify any part of the codebase at `{repo_path}`. This includes "
-            "creating entirely new files, modules, or directories -- you're not "
-            "limited to editing what already exists. If a change is cleaner as "
-            "new structure (e.g. a new file, or a new subdirectory for a "
-            "cohesive group of files) rather than growing an existing file, do "
-            "that; the editor tool's `create` command handles both.\n\n"
+            f"Modify any part of the codebase at `{repo_path}` -- including "
+            "creating new files or directories where that fits better than "
+            "editing what's already there.\n\n"
             "Check /tmp/steering/ (it may not exist or may be empty -- that's fine). "
             "A human overseeing this run may leave files there for you: notes, PDFs, "
             "links, anything. Use the read_pdf and fetch_url tools if you want to "
