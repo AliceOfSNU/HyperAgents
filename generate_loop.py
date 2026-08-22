@@ -706,6 +706,19 @@ def generate(
             log_container_output(exec_result)
             metadata["parent_agent_success"] = exec_result.exit_code == 0
 
+            # The meta-agent runs as root inside the container, and root_dir
+            # is bind-mounted, not copied -- so any file it creates or
+            # touches (new files, .git objects from its own commits,
+            # __pycache__ from importing tools) is left root-owned on the
+            # HOST side too. Confirmed live: this broke setup_initial_gen's
+            # resume-path shutil.rmtree with a PermissionError, since the
+            # host user can list but not unlink entries in a root-owned
+            # __pycache__/.git dir. Fix ownership back to the host user
+            # while the container (and its root access) still exists --
+            # much simpler than fixing it up from the host afterward, which
+            # needs its own throwaway root container to do the chown.
+            container.exec_run(["chown", "-R", f"{os.getuid()}:{os.getgid()}", f"/{REPO_NAME}"], workdir="/")
+
             # Copy container outputs to local
             local_agentoutput_folder = os.path.join(gen_output_dir, "agent_output/")
             copy_from_container(
