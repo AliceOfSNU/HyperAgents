@@ -1,0 +1,49 @@
+# FoodTruckEnv (vendored from CMU 11-766 HW2, see domains/foodtruck/environments/
+# for provenance) is a Gymnasium-compatible, text-only business-simulation
+# benchmark: the agent runs a food truck over a multi-day horizon, buying
+# ingredients and pricing a menu each day's PREP stage, then collects revenue
+# from randomly-sampled customer orders once it opens. Reward each step is
+# that day's net profit (revenue - rent); score is ROI (cumulative net
+# profit / starting funds) averaged across seeds -- see domains/foodtruck/
+# utils.py. Deliberately cheap and solvable by a small model: no external
+# API/service dependency (pure in-process simulation, unlike arc_agi3's
+# hosted API), and horizon/prep-ops below are shortened from the original
+# task spec's own defaults (domains/foodtruck/environments/config.py has the
+# full 20-day/20-ops spec) specifically to keep staged/frequent eval cheap.
+
+eval:
+  output_dir: "results"
+  run_id: null                 # Unique identifier for the evaluation run; null uses a random UUID
+  resume_from: null            # Path to an incomplete results dir to resume from
+  num_workers: 3                # Safe to run several episodes concurrently -- no shared external
+                                 # rate-limited API or GPU/docker contention, just LLM calls per step
+  max_steps_per_episode: 60     # Safety cap; horizon_days * max_prep_ops_per_day already bounds this
+                                 # tighter in practice (5*10=50 below) -- this just protects against an
+                                 # env/config change removing that natural bound.
+
+envs:
+  names: foodtruck
+  env_kwargs:
+    horizon_days: 5             # Shortened from the task spec's own default of 20 for cheap staged
+                                 # eval -- raise toward 20 for a "full" eval once the task agent is
+                                 # doing meaningfully better than a random/do-nothing baseline.
+    max_prep_ops_per_day: 10    # Shortened from the task spec's own default of 20, same reasoning.
+    # Every other EnvConfig field (start_funds, daily_rent, capacities, num_recipes,
+    # max_menu_items, price bounds, demand dynamics, ...) keeps its own built-in
+    # default from domains/foodtruck/environments/config.py -- only override here
+    # if a specific run needs a different value.
+
+# Seeds to play. Each is one distinct episode (different market-price and
+# demand-preference randomization); running each seed once (no repeat
+# attempts per seed, unlike arc_agi3's num_episodes-per-game) is enough
+# since there's no "best of N" scoring here, just an average across seeds.
+tasks:
+  foodtruck_seeds:
+    - 0
+    - 1
+    - 2
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

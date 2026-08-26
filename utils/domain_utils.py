@@ -23,6 +23,12 @@ def get_domain_score_key(domain):
     # deep-swe domain
     elif domain == "deep_swe":
         return "node_utility"
+    # FoodTruck domain -- ROI (cumulative net profit / start funds), not raw
+    # dollars, so it stays roughly comparable in scale to other domains'
+    # normalized scores if ever run alongside them for combined
+    # parent-selection scoring (see utils/gl_utils.py's select_parent).
+    elif domain == "foodtruck":
+        return "average_roi"
 
 
 def get_domain_splits(domain, eval_test=False):
@@ -61,6 +67,9 @@ def get_domain_splits(domain, eval_test=False):
     # diagnosed and fixed against.
     elif domain == "deep_swe":
         return ["train", "val"]
+    # FoodTruck domain -- one fixed seed list (domains/foodtruck/config/config.yaml), no val/test
+    elif domain == "foodtruck":
+        return ["train"]
 
 
 def can_domain_ensembled(domain):
@@ -90,6 +99,9 @@ def can_domain_ensembled(domain):
         return False
     # deep-swe domain -- real test-execution reward per task, not ensembleable
     elif domain == "deep_swe":
+        return False
+    # FoodTruck domain -- a live simulation episode, not ensembleable
+    elif domain == "foodtruck":
         return False
 
 
@@ -121,6 +133,9 @@ def get_domain_eval_subset(domain):
     # deep-swe domain -- own file-based subset (domains/deep_swe/subsets/), unused here
     elif domain == "deep_swe":
         return ""
+    # FoodTruck domain -- own config-based seed list, unused here
+    elif domain == "foodtruck":
+        return ""
 
 
 def get_domain_test_subset(domain):
@@ -150,6 +165,9 @@ def get_domain_test_subset(domain):
         return ""
     # deep-swe domain -- own file-based subset, unused here
     elif domain == "deep_swe":
+        return ""
+    # FoodTruck domain -- own config-based seed list, unused here
+    elif domain == "foodtruck":
         return ""
 
 
@@ -183,6 +201,10 @@ def get_domain_stagedeval_samples(domain):
     # unused by the generic staged-eval path
     elif domain == "deep_swe":
         return 8
+    # FoodTruck domain -- 1 of the 3 default seeds (domains/foodtruck/config/
+    # config.yaml) for a quick smoke-test pass
+    elif domain == "foodtruck":
+        return 1
 
 
 def get_domain_stagedeval_frac(domain):
@@ -218,6 +240,10 @@ def get_domain_stagedeval_frac(domain):
     # deep-swe domain -- unused, handled internally by domains/deep_swe/harness.py
     elif domain == "deep_swe":
         return 1.0
+    # FoodTruck domain -- 1 of the 3 default seeds, matching
+    # get_domain_stagedeval_samples above
+    elif domain == "foodtruck":
+        return 1 / 3
 
 
 def has_domain_val_subset(domain):
@@ -247,4 +273,7 @@ def has_domain_val_subset(domain):
         return False
     # deep-swe domain
     elif domain == "deep_swe":
+        return False
+    # FoodTruck domain
+    elif domain == "foodtruck":
         return False

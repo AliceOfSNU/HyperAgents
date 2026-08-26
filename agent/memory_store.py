@@ -11,13 +11,18 @@ Storage is two separate files at the repo root:
   a 1536-float vector into the agent's own context.
 
 Notes are immutable once written, with one narrow, deliberate exception:
-add_links() may patch the `links` field of the single most-recently
-appended note (never an older one). That's "finish the note you just
-created a moment ago", not A-Mem-style evolution where a later
-generation can reach back and rewrite an old note's own meaning --
-which was rejected specifically because it destroys the audit trail of
-which generation actually believed what (see memory:
-dgm_h_map_elites_parent_selection's sibling discussion).
+add_links() may patch the `links` field of any note appended during the
+*current* meta-agent session (tracked via mark_session_start(), called
+once at the start of MetaAgent.forward() -- see SESSION_MARKER_PATH).
+That's "finish notes you created earlier this run", not A-Mem-style
+evolution where a later generation can reach back and rewrite an old
+note's own meaning -- which was rejected specifically because it
+destroys the audit trail of which generation actually believed what
+(see memory: dgm_h_map_elites_parent_selection's sibling discussion).
+Once a generation's run ends, all of its notes -- and their links --
+are frozen like everything else; the boundary is "this run", not "the
+single most recent note", so writing several notes in one session
+doesn't force linking each one before appending the next.
 
 Links are stored one-directional (the newer note points at older ones
 it relates to) but shown bidirectionally: find_backlinks() computes,
@@ -38,6 +43,10 @@ import litellm
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 MEMORY_PATH = _REPO_ROOT / "memory.jsonl"
 EMBEDDINGS_PATH = _REPO_ROOT / "memory_embeddings.jsonl"
+# Deliberately outside the repo -- this is per-container-run scratch
+# state, not something that should ever show up as an untracked file
+# in the meta-agent's own model_patch.diff.
+SESSION_MARKER_PATH = Path("/tmp/.memory_session_start")
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 
@@ -201,35 +210,66 @@ def append_note(title, description, content, type, files=None, about_generations
     return note, embedding is not None, candidates
 
 
+def mark_session_start():
+    """Call once, at the very start of a meta-agent run (before any
+    memory_append calls), to record how many notes already existed --
+    everything appended from this point on is "this session" and stays
+    linkable via add_links() for the rest of the run, no matter how
+    many more notes get appended after it. Safe to call even if
+    memory.jsonl doesn't exist yet (records 0)."""
+    count = len(load_notes())
+    SESSION_MARKER_PATH.write_text(str(count), encoding="utf-8")
+
+
+def _session_start_index():
+    """Line-index (0-based) of the first note considered part of the
+    current session. Falls back to "only the last line" -- the old,
+    most conservative behavior -- if the marker is missing or corrupt,
+    rather than silently treating the whole file as in-session."""
+    try:
+        return int(SESSION_MARKER_PATH.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
 def add_links(note_id, links):
-    """Patches ONLY the `links` field of the single most-recently
-    appended note in memory.jsonl, in place -- rejects any note_id
-    that isn't the last line. Every other line, and every other field
-    of this one, is preserved byte-for-byte."""
+    """Patches ONLY the `links` field of a note appended during the
+    current session (see mark_session_start()), in place -- rejects
+    any note_id appended in an earlier session. Every other line, and
+    every other field of this one, is preserved byte-for-byte."""
     if not MEMORY_PATH.exists():
         return False, "memory.jsonl doesn't exist yet -- nothing to link."
     raw_lines = MEMORY_PATH.read_text(encoding="utf-8").splitlines()
-    last_idx = None
-    for i in range(len(raw_lines) - 1, -1, -1):
-        if raw_lines[i].strip():
-            last_idx = i
-            break
-    if last_idx is None:
+    nonblank_idxs = [i for i, line in enumerate(raw_lines) if line.strip()]
+    if not nonblank_idxs:
         return False, "memory.jsonl is empty -- nothing to link."
 
-    try:
-        last_note = json.loads(raw_lines[last_idx])
-    except json.JSONDecodeError:
-        return False, "The last line of memory.jsonl isn't valid JSON -- can't safely patch it."
+    session_start = _session_start_index()
+    if session_start is None:
+        # No valid marker -- fall back to last-line-only.
+        allowed_idxs = nonblank_idxs[-1:]
+    else:
+        allowed_idxs = [i for i in nonblank_idxs if i >= session_start]
 
-    if last_note.get("id") != note_id:
+    target_idx = None
+    for i in allowed_idxs:
+        try:
+            if json.loads(raw_lines[i]).get("id") == note_id:
+                target_idx = i
+                break
+        except json.JSONDecodeError:
+            continue
+
+    if target_idx is None:
         return False, (
-            f"Only the most recently appended note ({last_note.get('id')!r}) can have "
-            f"links attached; {note_id!r} is not it. Notes are otherwise immutable."
+            f"{note_id!r} isn't a note from this session (or its line isn't valid JSON) -- "
+            "add_links only works on notes you've appended since this run started. "
+            "Notes from earlier generations are immutable."
         )
 
-    last_note["links"] = links
-    raw_lines[last_idx] = json.dumps(last_note, ensure_ascii=False)
+    note = json.loads(raw_lines[target_idx])
+    note["links"] = links
+    raw_lines[target_idx] = json.dumps(note, ensure_ascii=False)
     MEMORY_PATH.write_text("\n".join(raw_lines) + "\n", encoding="utf-8")
     return True, None
 

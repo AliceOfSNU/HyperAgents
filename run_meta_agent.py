@@ -16,6 +16,19 @@ def main():
         help="Model to use for the agent",
     )
     parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help=(
+            "Sampling temperature for the meta-agent's own calls. Default 0.0 "
+            "matches chat_with_agent's long-standing default (deterministic-as-"
+            "possible tool use). Raise this for a weaker/smaller model that gets "
+            "stuck reproducing the exact same non-tool-calling response every "
+            "generation -- confirmed live with qwen3.8:27b -- since greedy "
+            "decoding against an unchanging prompt has no way to ever vary."
+        ),
+    )
+    parser.add_argument(
         "--chat_history_file",
         type=str,
         default="./outputs/chat_history.md",
@@ -53,10 +66,18 @@ def main():
     )
     args = parser.parse_args()
 
+    # Exposed so a tool running inside the meta-agent's own tool-calling loop
+    # (agent/tools/test_patch.py) can compute "what has this session actually
+    # changed in swe_task_agent.py so far" via `git diff <this> -- swe_task_agent.py`
+    # -- the same base commit model_patch.diff itself gets diffed against at
+    # the end, just readable mid-session instead of only after forward() returns.
+    os.environ["META_AGENT_BASE_COMMIT"] = args.base_commit
+
     # Run meta agent
     meta_agent = MetaAgent(
         model=args.model,
         chat_history_file=args.chat_history_file,
+        temperature=args.temperature,
     )
     meta_agent.forward(
         repo_path=args.repo_path,

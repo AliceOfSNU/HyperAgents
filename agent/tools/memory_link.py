@@ -4,9 +4,9 @@ from agent.memory_store import COMMON_RELATIONS, add_links
 def tool_info():
     return {
         "name": "memory_link",
-        "description": f"""Attach relation-typed links from a note to related earlier notes, using the candidates memory_append's own result just surfaced.
+        "description": f"""Attach relation-typed links from a note to related earlier notes, using the candidates memory_append's own result surfaced when you wrote it.
 
-Only works on the single most recently appended note -- not a general "edit any note's links" tool. Notes are otherwise immutable; this exists to let you finish the note you just created, not to revise history.
+Works on any note you've appended so far THIS run -- not just the very last one, so writing several notes before circling back to link them is fine. It does NOT work on notes from earlier generations/sessions -- not a general "edit any note's links" tool. Notes are otherwise immutable; this exists to let you finish notes you created this run, not to revise history. If you write multiple notes in one session, try to decide on links (or explicitly "none apply") for each of them before you finish, since the window closes once this run ends.
 
 Common relation labels: {', '.join(COMMON_RELATIONS)} -- or any other short (1-2 word) description that fits better.""",
         "input_schema": {

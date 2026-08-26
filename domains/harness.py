@@ -189,6 +189,7 @@ if __name__ == "__main__":
             "imo_proof",
             "imo_proof_grading",  # To grade generated proofs with an agent
             "arc_agi3",
+            "foodtruck",
         ],
         required=True,
         help="Domain to evaluate",
@@ -324,6 +325,41 @@ if __name__ == "__main__":
                 ),
             )
             output_folder = harness_arc_agi3(cfg)
+            # Save cfg in output folder
+            from omegaconf import OmegaConf
+            OmegaConf.save(config=cfg, f=os.path.join(output_folder, "config.yaml"))
+
+    # FoodTruck text-only business-simulation domain
+    elif domain == "foodtruck":
+        from domains.foodtruck.eval import harness_foodtruck
+
+        config_dir = os.path.join(os.getcwd(), "./domains/foodtruck/config")
+        with initialize_config_dir(config_dir=config_dir, version_base="1.1"):
+            cfg = compose(
+                config_name="config",
+                overrides=[
+                    f"eval.output_dir={args.output_dir}",
+                    f"eval.num_workers={args.num_workers}",
+                    f"eval.run_id={args.run_id if args.run_id is not None else 'null'}",
+                ]
+                # --num_samples overrides which/how many seeds to play (e.g. the
+                # staged-eval path's quick smoke-test pass, see
+                # utils/domain_utils.py's get_domain_stagedeval_samples) --
+                # config.yaml's own tasks.foodtruck_seeds is a fixed list, not a
+                # count, so this substitutes a fresh [0..N-1] seed list rather
+                # than trying to slice the configured one.
+                + (
+                    [f"tasks.foodtruck_seeds=[{','.join(str(i) for i in range(args.num_samples))}]"]
+                    if args.num_samples > 0
+                    else []
+                )
+                + (
+                    [f"eval.resume_from={args.resume_from}"]
+                    if args.resume_from is not None
+                    else []
+                ),
+            )
+            output_folder = harness_foodtruck(cfg)
             # Save cfg in output folder
             from omegaconf import OmegaConf
             OmegaConf.save(config=cfg, f=os.path.join(output_folder, "config.yaml"))

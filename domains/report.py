@@ -175,6 +175,7 @@ if __name__ == "__main__":
             "imo_grading",
             "imo_proof",
             "arc_agi3",
+            "foodtruck",
         ],
         required=True,
         help="Domain to evaluate",
@@ -205,3 +206,8 @@ if __name__ == "__main__":
     elif domain == "arc_agi3":
         from domains.arc_agi3.eval import report_arc_agi3
         report_arc_agi3(output_dir=args.dname)
+
+    # FoodTruck text-only business-simulation domain
+    elif domain == "foodtruck":
+        from domains.foodtruck.eval import report_foodtruck
+        report_foodtruck(output_dir=args.dname)

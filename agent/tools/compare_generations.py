@@ -14,8 +14,9 @@ deep_swe_eval_val/ directory is stripped before this container ever sees it
 that, it just surfaces what's already visible in one place.
 """
 import json
-import re
 from pathlib import Path
+
+from agent.trajectory_stats import classify_bash, find_trajectory
 
 # Resolved relative to this file's own location rather than imported from
 # domains.deep_swe.config -- that package-relative import only resolves when
@@ -59,56 +60,6 @@ Behavioral metrics are heuristic, not exact:
     }
 
 
-# Checked in this order (first match wins) so e.g. `go test ./... > out.txt`
-# counts as a test run, not a write.
-_TEST_PATTERNS = [
-    re.compile(r"\bgo\s+(test|vet|build)\b"),
-    re.compile(r"\bpytest\b"),
-    re.compile(r"\bpython3?\s+-m\s+(pytest|unittest)\b"),
-    re.compile(r"\b(npm|yarn|pnpm)\s+(run\s+)?(test|build)\b"),
-    re.compile(r"\bjest\b"),
-    re.compile(r"\bcargo\s+(test|build|check)\b"),
-    re.compile(r"\btsc\b"),
-]
-_WRITE_PATTERNS = [
-    re.compile(r"\bsed\s+-i\b"),
-    re.compile(r"\bgit\s+apply\b"),
-    re.compile(r"\bpatch\s+-p"),
-    re.compile(r"\bgofmt\s+-w\b"),
-    re.compile(r"\bmv\s"),
-    re.compile(r"\brm\s"),
-    re.compile(r"\bmkdir\s"),
-    re.compile(r"<<\s*['\"]?[A-Za-z_]+['\"]?"),  # heredoc -- usually writing a file
-    re.compile(r"[^2\d]>\s*[^&(]"),  # redirection into a file (roughly excludes 2>&1-style fd dups)
-]
-_READ_PATTERNS = [
-    re.compile(r"\bcat\s"),
-    re.compile(r"\bgrep\b"),
-    re.compile(r"\brg\b"),
-    re.compile(r"\bfind\s"),
-    re.compile(r"\bls\b"),
-    re.compile(r"\bsed\s+-n\b"),
-    re.compile(r"\bhead\s"),
-    re.compile(r"\btail\s"),
-    re.compile(r"\bwc\s"),
-    re.compile(r"\bgit\s+(status|diff|log|show|branch)\b"),
-    re.compile(r"\bpwd\b"),
-]
-
-
-def _classify_bash(cmd):
-    for pat in _TEST_PATTERNS:
-        if pat.search(cmd):
-            return "test"
-    for pat in _WRITE_PATTERNS:
-        if pat.search(cmd):
-            return "write"
-    for pat in _READ_PATTERNS:
-        if pat.search(cmd):
-            return "read"
-    return "other"
-
-
 def _task_stats(chat_history_path):
     try:
         rounds = json.loads(chat_history_path.read_text(encoding="utf-8"))
@@ -129,7 +80,7 @@ def _task_stats(chat_history_path):
         for call in (r.get("act") or []):
             if call.get("name") == "bash":
                 cmd = (call.get("arguments") or {}).get("command", "")
-                counts[_classify_bash(cmd)] += 1
+                counts[classify_bash(cmd)] += 1
     return {
         "n_rounds": n_rounds,
         "plan_frac": (n_plan / n_rounds) if n_rounds else 0.0,
@@ -144,18 +95,6 @@ def _gen_sort_key(name):
     # "gen_initial" first, then gen_1, gen_2, ... numerically.
     suffix = name[len("gen_"):]
     return (0, -1) if suffix == "initial" else (1, int(suffix))
-
-
-def _find_trajectory(eval_dir, task_id):
-    """Trial directories are named "<task_id>__<random suffix>", not a bare
-    task_id match (confirmed live against real output) -- glob for it rather
-    than assuming an exact path, matching harness.py's own more thorough
-    task_name-based lookup in spirit if not in mechanism."""
-    exact = eval_dir / task_id / "agent" / "chat_history.json"
-    if exact.exists():
-        return exact
-    matches = sorted(eval_dir.glob(f"{task_id}__*/agent/chat_history.json"))
-    return matches[0] if matches else None
 
 
 def _load_json(path):
@@ -213,7 +152,7 @@ def tool_function(evals_folder, genids=None):
                 lang = languages.get(task_id, "?")
                 lang_scores.setdefault(lang, []).append(reward if isinstance(reward, (int, float)) else 0.0)
 
-                traj_path = _find_trajectory(gdir / "deep_swe_eval" / "eval", task_id)
+                traj_path = find_trajectory(gdir / "deep_swe_eval" / "eval", task_id)
                 stats = _task_stats(traj_path) if traj_path else None
                 if stats is None:
                     continue

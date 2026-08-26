@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -509,6 +510,7 @@ def generate(
     pr_poll_interval=30,
     pr_root_branch=None,
     meta_agent_model=None,
+    meta_agent_temperature=None,
 ):
     # Setup local output folder
     prev_gen_dir = os.path.join(output_dir, f"gen_{parent_genid}")
@@ -695,6 +697,7 @@ def generate(
                     # a valid child was ever produced.
                     *(["--parent_genid", str(parent_genid)] if isinstance(parent_genid, int) else []),
                     *(["--model", meta_agent_model] if meta_agent_model else []),
+                    *(["--temperature", str(meta_agent_temperature)] if meta_agent_temperature is not None else []),
                 ]
 
             run_workdir = (
@@ -702,7 +705,35 @@ def generate(
                 if run_baseline and "no_selfimprove" in run_baseline
                 else f"/{REPO_NAME}"
             )
-            exec_result = container.exec_run(cmd=command, workdir=run_workdir, environment=_meta_agent_env_vars())
+
+            # skills/patch_testing's watcher has to run CONCURRENTLY with the
+            # meta-agent's own session (unlike skills/branching's own
+            # branch_orchestrator, deferred to this generation's finally
+            # block below) -- a test_patch tool call blocks synchronously
+            # inside the meta-agent's own container, polling for a report
+            # this thread writes, so it has to already be watching before
+            # that call can ever see one. Only relevant for deep_swe (same
+            # guard as branch-request processing below); silently a no-op
+            # if the meta-agent never calls test_patch this generation.
+            patch_test_stop_event = None
+            patch_test_watcher = None
+            if "deep_swe" in domains:
+                from domains.deep_swe.patch_test_orchestrator import watch_loop as patch_test_watch_loop
+                patch_test_stop_event = threading.Event()
+                patch_test_watcher = threading.Thread(
+                    target=patch_test_watch_loop,
+                    args=(root_dir, output_dir, patch_test_stop_event),
+                    daemon=True,
+                )
+                patch_test_watcher.start()
+
+            try:
+                exec_result = container.exec_run(cmd=command, workdir=run_workdir, environment=_meta_agent_env_vars())
+            finally:
+                if patch_test_stop_event is not None:
+                    patch_test_stop_event.set()
+                    patch_test_watcher.join(timeout=60)
+
             log_container_output(exec_result)
             metadata["parent_agent_success"] = exec_result.exit_code == 0
 
@@ -909,6 +940,8 @@ def generate_loop(
     require_pr_approval=False,
     pr_remote="fork",
     pr_poll_interval=30,
+    meta_agent_model=None,
+    meta_agent_temperature=None,
 ):
     # Initialization
     docker_client = docker.DockerClient()
@@ -925,7 +958,17 @@ def generate_loop(
     # closing tag rendered as "</｜｜DSML｜｜tool>" instead of "</json>"),
     # which check_for_tool_uses's tag-based parser can never recognize -- a
     # known formatting-reliability issue with this model, not a bug in our code.
-    meta_agent_model = "deepseek/deepseek-v4-pro" if domains in (["polyglot"], ["research"], ["deep_swe"]) else None
+    # That failure was specifically about the OLD prompt-engineered tool-call
+    # format though (a free-text <json>...</json> convention) -- agent/
+    # llm_withtools.py has since moved to the provider's own native
+    # function-calling (see its own docstring), which may or may not still be
+    # vulnerable to the same corrupted-token leakage; not re-verified either
+    # way. An explicit meta_agent_model argument always wins over this
+    # historical default, for exactly this kind of "try flash again on
+    # purpose" experiment.
+    meta_agent_model = meta_agent_model or (
+        "deepseek/deepseek-v4-pro" if domains in (["polyglot"], ["research"], ["deep_swe"]) else None
+    )
     if resume_from:
         output_dir = os.path.normpath(os.path.abspath(resume_from))
         run_id = os.path.basename(output_dir).split("generate_")[-1]
@@ -1128,6 +1171,7 @@ def generate_loop(
                 pr_poll_interval=pr_poll_interval,
                 pr_root_branch=pr_root_branch,
                 meta_agent_model=meta_agent_model,
+                meta_agent_temperature=meta_agent_temperature,
             )
     
             # NOTE: need to update and save archive before running ensembling eval
@@ -1289,6 +1333,7 @@ if __name__ == "__main__":
             "arc_agi3",
             "research",  # separate Docker-sandboxed harness, see domains/research/harness.py
             "deep_swe",  # separate Pier-driven harness, see domains/deep_swe/harness.py
+            "foodtruck",  # cheap in-process text simulation, see domains/foodtruck/eval.py
         ],
         required=True,
         help="One or more domains to evaluate (must be from the allowed list)",
@@ -1421,6 +1466,29 @@ if __name__ == "__main__":
         default=30,
         help="Seconds between checks of whether a pending PR has been merged/closed",
     )
+    parser.add_argument(
+        "--meta_agent_model",
+        type=str,
+        default=None,
+        help=(
+            "Explicit litellm model string for the meta-agent (e.g. deepseek/deepseek-v4-flash). "
+            "Overrides generate_loop()'s own historical per-domain default (deepseek-v4-pro for "
+            "polyglot/research/deep_swe, run_meta_agent.py's own CLAUDE_MODEL default otherwise)."
+        ),
+    )
+    parser.add_argument(
+        "--meta_agent_temperature",
+        type=float,
+        default=None,
+        help=(
+            "Explicit sampling temperature for the meta-agent's own calls. Overrides "
+            "run_meta_agent.py's own default of 0.0 (deterministic-as-possible tool use). "
+            "Raise this for a weaker/smaller model that gets stuck reproducing the exact "
+            "same non-tool-calling response every generation -- confirmed live with "
+            "qwen3.8:27b -- since greedy decoding against an unchanging prompt has no way "
+            "to ever vary."
+        ),
+    )
     args = parser.parse_args()
 
     # Post-parse validation
@@ -1459,4 +1527,6 @@ if __name__ == "__main__":
         require_pr_approval=args.require_pr_approval,
         pr_remote=args.pr_remote,
         pr_poll_interval=args.pr_poll_interval,
+        meta_agent_model=args.meta_agent_model,
+        meta_agent_temperature=args.meta_agent_temperature,
     )
